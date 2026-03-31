@@ -37,6 +37,7 @@ include(":koog-compose-core")
 include(":koog-compose-ui")
 include(":koog-compose-device")
 include(":koog-compose-testing")
+include(":koog-compose-session-room")
 
 // Sample app to test the library locally
 include(":sample-app")
