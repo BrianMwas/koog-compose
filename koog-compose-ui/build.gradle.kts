@@ -8,6 +8,8 @@ plugins {
 }
 
 kotlin {
+    explicitApi()
+
     androidTarget {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
@@ -18,6 +20,8 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
+    
+    // CMP parity: add iOS targets
     iosArm64()
     iosSimulatorArm64()
 
@@ -44,6 +48,11 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
         }
+        
+        val iosMain by creating {
+            dependsOn(commonMain.get())
+        }
+        
         val desktopMain by getting {
             dependencies {
                 implementation(compose.desktop.currentOs)

@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.dp
  * Colors for the Koog chat UI.
  */
 @Immutable
-data class ChatColors(
+public data class ChatColors(
     val userBubble: Color,
     val assistantBubble: Color,
     val userText: Color,
@@ -30,7 +30,7 @@ data class ChatColors(
  * Shapes for the Koog chat UI.
  */
 @Immutable
-data class ChatShapes(
+public data class ChatShapes(
     val userBubble: Shape,
     val assistantBubble: Shape,
     val inputField: Shape
@@ -41,7 +41,7 @@ data class ChatShapes(
  * Wrap your chat screen in this to override the default styles.
  */
 @Composable
-fun KoogChatTheme(
+public fun KoogChatTheme(
     colors: ChatColors = defaultChatColors(),
     shapes: ChatShapes = defaultChatShapes(),
     content: @Composable () -> Unit
@@ -54,7 +54,7 @@ fun KoogChatTheme(
 }
 
 @Composable
-fun defaultChatColors() = ChatColors(
+public fun defaultChatColors(): ChatColors = ChatColors(
     userBubble = MaterialTheme.colorScheme.primaryContainer,
     assistantBubble = MaterialTheme.colorScheme.surfaceVariant,
     userText = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -66,7 +66,7 @@ fun defaultChatColors() = ChatColors(
     border = MaterialTheme.colorScheme.outlineVariant
 )
 
-fun defaultChatShapes() = ChatShapes(
+public fun defaultChatShapes(): ChatShapes = ChatShapes(
     userBubble = RoundedCornerShape(16.dp, 4.dp, 16.dp, 16.dp),
     assistantBubble = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp),
     inputField = RoundedCornerShape(24.dp)
@@ -74,7 +74,7 @@ fun defaultChatShapes() = ChatShapes(
 
 internal val LocalChatColors = staticCompositionLocalOf {
     ChatColors(
-        Color.Unspecified, Color.Unused, Color.Unspecified, Color.Unspecified,
+        Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified,
         Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified, Color.Unspecified
     )
 }
