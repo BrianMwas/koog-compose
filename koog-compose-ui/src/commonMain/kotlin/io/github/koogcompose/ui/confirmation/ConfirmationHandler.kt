@@ -29,6 +29,7 @@ import androidx.compose.ui.unit.dp
 import io.github.koogcompose.security.PendingConfirmation
 import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.ui.state.ChatState
+import kotlin.coroutines.resume
 import kotlinx.coroutines.launch
 
 /**
@@ -262,7 +263,7 @@ fun rememberDialogConfirmationHandler(): ConfirmationHandler {
             override suspend fun requestConfirmation(pending: PendingConfirmation): Boolean {
                 return kotlinx.coroutines.suspendCancellableCoroutine { cont ->
                     pendingState = pending
-                    resolveCallback = { approved -> cont.resume(approved) {} }
+                    resolveCallback = { approved -> cont.resume(approved) }
                 }
             }
         }

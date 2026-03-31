@@ -7,18 +7,13 @@ plugins {
 }
 
 kotlin {
+    explicitApi()
+
     androidTarget {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
-    jvm("desktop") {
-        compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_11)
-        }
-    }
-    iosArm64()
-    iosSimulatorArm64()
 
     sourceSets {
         commonMain.dependencies {
@@ -33,16 +28,7 @@ kotlin {
             implementation(project(":koog-compose-testing"))
         }
         androidMain.dependencies {
-            // CameraX
-            implementation(libs.androidx.camera.core)
-            implementation(libs.androidx.camera.camera2)
-            implementation(libs.androidx.camera.lifecycle)
-            implementation(libs.androidx.camera.view)
-            // Location
             implementation(libs.play.services.location)
-            // Background agents
-            implementation(libs.androidx.work.runtime.ktx)
-            // Core
             implementation(libs.androidx.core.ktx)
         }
     }

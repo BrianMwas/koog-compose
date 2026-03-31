@@ -33,10 +33,13 @@ kotlin {
             implementation(libs.compose.uiToolingPreview)
             implementation(libs.androidx.lifecycle.viewmodel.compose)
             implementation(libs.androidx.lifecycle.runtime.compose)
+            implementation(libs.coil.compose)
+            
+            // Material Icons
+            implementation(compose.materialIconsExtended)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
-            implementation(project(":koog-compose-testing"))
         }
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)

@@ -6,6 +6,8 @@ plugins {
 }
 
 kotlin {
+    explicitApi()
+
     androidTarget {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
@@ -17,9 +19,10 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(project(":koog-compose-core"))
+            api(project(":koog-compose-ui"))
             implementation(libs.kotlin.test)
             implementation(libs.kotlinx.coroutines.test)
+            implementation(libs.kotlinx.serialization.json)
             implementation(libs.turbine)
         }
     }

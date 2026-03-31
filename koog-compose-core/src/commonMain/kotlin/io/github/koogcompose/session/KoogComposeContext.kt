@@ -1,10 +1,17 @@
 package io.github.koogcompose.session
 
+import io.github.koogcompose.event.EventHandlers
+import io.github.koogcompose.phase.Phase
+import io.github.koogcompose.phase.PhaseRegistry
+import io.github.koogcompose.phase.toTool
 import io.github.koogcompose.prompt.PromptStack
+import io.github.koogcompose.provider.AIProvider
+import io.github.koogcompose.provider.KoogAIProvider
 import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.provider.ProviderConfigBuilder
 import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolRegistry
+import kotlin.ConsistentCopyVisibility
 
 
 /**
@@ -253,6 +260,10 @@ class LLMParamsConfigBuilder {
  * The central runtime object for koog-compose.
  * Built via the [koogCompose] DSL. Immutable.
  *
+ * This object is intentionally headless. Chat is one consumer of the runtime,
+ * but the same context is meant to support higher-level orchestration such as
+ * routines/phases layered on top of secure tools, prompts, and provider config.
+ *
  * Full example:
  * ```kotlin
  * val context = koogCompose {
@@ -306,12 +317,20 @@ class LLMParamsConfigBuilder {
  * }
  * ```
  */
-class KoogComposeContext private constructor(
+@ConsistentCopyVisibility
+data class KoogComposeContext private constructor(
     val providerConfig: ProviderConfig,
     val promptStack: PromptStack,
     val toolRegistry: ToolRegistry,
+    val phaseRegistry: PhaseRegistry = PhaseRegistry.Empty,
+    val activePhaseName: String? = null,
+    val eventHandlers: EventHandlers = EventHandlers.Empty,
     val config: KoogConfig,
 ) {
+    fun createProvider(): AIProvider = KoogAIProvider(this)
+
+    val activePhase: Phase? get() = activePhaseName?.let { phaseRegistry.resolve(it) }
+
     fun withSessionContext(context: String): KoogComposeContext = copy(
         promptStack = promptStack.withSessionContext(context)
     )
@@ -320,16 +339,38 @@ class KoogComposeContext private constructor(
         toolRegistry = toolRegistry.plus(tool)
     )
 
-    private fun copy(
-        providerConfig: ProviderConfig = this.providerConfig,
-        promptStack: PromptStack = this.promptStack,
-        toolRegistry: ToolRegistry = this.toolRegistry,
-        config: KoogConfig = this.config,
-    ) = KoogComposeContext(providerConfig, promptStack, toolRegistry, config)
+    fun withPhase(name: String): KoogComposeContext = copy(activePhaseName = name)
+
+    /**
+     * Resolves the effective system instructions for the current active phase.
+     *
+     * Combines the global prompt with the active phase's resolved instructions.
+     * Falls back to the global prompt alone if no phase is active.
+     */
+    fun resolveEffectiveInstructions(): String {
+        val globalPrompt = promptStack.resolve()
+        val activePhase = activePhaseName?.let { phaseRegistry.resolve(it) }
+            ?: phaseRegistry.initialPhase
+        return if (activePhase != null) {
+            "$globalPrompt\n\n${activePhase.resolvedInstructions}"
+        } else {
+            globalPrompt
+        }
+    }
+
+    fun resolveEffectiveTools(): List<SecureTool> {
+        val baseTools = activePhase?.toolRegistry?.all ?: toolRegistry.all
+        val transitionTools = activePhase?.transitions?.map { it.toTool() } ?: emptyList()
+        return baseTools + transitionTools
+    }
+
     class Builder {
         private var providerConfig: ProviderConfig? = null
         private var promptStack: PromptStack = PromptStack.Empty
         private var toolRegistry: ToolRegistry = ToolRegistry.Empty
+        private var phaseRegistry: PhaseRegistry = PhaseRegistry.Empty
+        private var activePhaseName: String? = null
+        private var eventHandlers: EventHandlers = EventHandlers.Empty
         private var config: KoogConfig = KoogConfig()
 
         fun provider(block: ProviderConfigBuilder.() -> Unit) {
@@ -344,6 +385,22 @@ class KoogComposeContext private constructor(
             toolRegistry = ToolRegistry(block)
         }
 
+        fun phases(block: PhaseRegistry.Builder.() -> Unit) {
+            phaseRegistry = PhaseRegistry.Builder().apply(block).build()
+            // Default to the first defined phase if not specified
+            if (activePhaseName == null) {
+                activePhaseName = phaseRegistry.all.firstOrNull()?.name
+            }
+        }
+
+        fun initialPhase(name: String) {
+            activePhaseName = name
+        }
+
+        fun events(block: EventHandlers.Builder.() -> Unit) {
+            eventHandlers = EventHandlers(block)
+        }
+
         fun config(block: KoogConfig.Builder.() -> Unit) {
             config = KoogConfig(block)
         }
@@ -353,6 +410,9 @@ class KoogComposeContext private constructor(
                 ?: error("koog-compose: provider { } block is required. Add anthropic(), openAI(), google(), or ollama() inside it."),
             promptStack = promptStack,
             toolRegistry = toolRegistry,
+            phaseRegistry = phaseRegistry,
+            activePhaseName = activePhaseName,
+            eventHandlers = eventHandlers,
             config = config
         )
     }

@@ -36,6 +36,7 @@ class ChatState internal constructor(
     // ── Session state (collected in composables via collectAsState) ───────────
 
     val sessionStateFlow get() = session.state
+    val eventFlow get() = session.events
     val pendingConfirmationFlow get() = session.permissionManager.pendingConfirmation
 
 
@@ -87,11 +88,11 @@ class ChatState internal constructor(
     // ── Permission actions ────────────────────────────────────────────────────
 
     fun confirmToolExecution() {
-        scope.launch { session.permissionManager.onUserConfirmed() }
+        scope.launch { session.confirmPendingToolExecution() }
     }
 
     fun denyToolExecution() {
-        scope.launch { session.permissionManager.onUserDenied() }
+        scope.launch { session.denyPendingToolExecution() }
     }
 
     // ── Context ───────────────────────────────────────────────────────────────

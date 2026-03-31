@@ -1,7 +1,5 @@
 package io.github.koogcompose.prompt
 
-import io.modelcontextprotocol.kotlin.sdk.types.ProgressToken
-
 class PromptStack(
     private val enforced: List<String>,
     private val default: List<String>,
