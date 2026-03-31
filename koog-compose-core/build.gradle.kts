@@ -7,7 +7,7 @@ plugins {
 }
 
 kotlin {
-    // Removed explicitApi() as per user request to "stop using public"
+    explicitApi()
 
     androidTarget {
         compilerOptions {

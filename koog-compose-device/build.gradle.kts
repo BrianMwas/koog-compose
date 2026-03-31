@@ -2,8 +2,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.kotlinMultiplatform)
-    alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.androidLibrary)
+    alias(libs.plugins.androidx.room)
 }
 
 kotlin {
@@ -14,6 +14,10 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
+    
+    // Add iOS targets for CMP parity
+    iosArm64()
+    iosSimulatorArm64()
 
     sourceSets {
         commonMain.dependencies {
@@ -21,6 +25,10 @@ kotlin {
             api(project(":koog-compose-core"))
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+            
+            // Room KMP dependencies
+            implementation(libs.androidx.room.runtime)
+            implementation(libs.androidx.sqlite.bundled)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -30,8 +38,17 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.play.services.location)
             implementation(libs.androidx.core.ktx)
+            implementation(libs.androidx.work.runtime.ktx)
+        }
+        
+        val iosMain by creating {
+            dependsOn(commonMain.get())
         }
     }
+}
+
+room {
+    schemaDirectory("$projectDir/schemas")
 }
 
 android {
@@ -44,4 +61,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+}
+
+dependencies {
+    // Room compiler needs to be added here for KMP
+    add("kspAndroid", libs.androidx.room.compiler)
+    add("kspIosArm64", libs.androidx.room.compiler)
+    add("kspIosSimulatorArm64", libs.androidx.room.compiler)
 }

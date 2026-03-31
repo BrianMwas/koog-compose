@@ -1,154 +1,81 @@
 # koog-compose
 
-`koog-compose` is an Android-first Kotlin Multiplatform runtime for building AI features that can orchestrate app logic, device capabilities, and UI from one DSL.
+`koog-compose` is a developer-first Kotlin Multiplatform (KMP) runtime for building AI-driven features that orchestrate app logic, device capabilities, and UI from a single, declarative DSL.
 
-The current v1 shape is intentionally split:
-- `koog-compose-core`: headless runtime, provider bridge, prompt stack, secure tool registry, session/tool loop
-- `koog-compose-ui`: Compose state adapters plus small Material 3 primitives
-- `koog-compose-device`: Android-only integrations for device APIs
-- `koog-compose-testing`: scripted providers, fake tools, and confirmation doubles
-- `sample-app`: the official Android example app
+While Android-first in its integration depth, the library is architected for **Compose Multiplatform (CMP)** to ensure cross-platform stability and portability.
 
-`composeApp` and `iosApp` remain in the repo as starter scaffolds, but they are not part of the supported library surface in this pass.
+## 🚀 Recent v1 Milestone Updates
 
-## Design Direction
+We've recently shifted from a basic tool loop to a **Structured Orchestration Framework**. Key highlights:
 
-This library is not meant to stop at "chat UI around an LLM".
+- **Phases & Conversation Graphs**: The conversation is now a state machine. The LLM can self-transition between "Phases" (Discovery, Payment, Support) using auto-generated transition tools.
+- **5-Star Security & UX**: Added an `AutoConfirmationHandler` that automatically selects the right UI friction (Snackbar for SENSITIVE tools, Dialog for CRITICAL tools) based on `PermissionLevel`.
+- **Plug-and-Play Persistence**: Refactored Room storage into an "Autonomous Battery" mode. Users can plug their own DAO into the session without being forced into a specific database file or configuration.
+- **Enhanced Tracing & Telemetry**: Added a native `KoogEventBus` with support for `TracingSink`s. Ready-to-use `ConsoleTracingSink` included for Logcat/Console debugging.
+- **Scripted Determinism**: The testing provider now supports `PhaseValidation`, allowing you to assert that the AI is in the correct state before returning scripted responses.
 
-The runtime is headless on purpose so developers can layer familiar, declarative syntax on top of it in the same spirit that made libraries like Koin and Haze easy to read:
+## 🏗 Design Direction
+
+The runtime is intentionally headless. Developers layer familiar syntax on top of it:
 
 ```kotlin
 val context = koogCompose {
     provider {
-        openAI(apiKey = BuildConfig.API_KEY) {
-            model = "gpt-4o"
+        anthropic(apiKey = BuildConfig.ANTHROPIC_KEY) { model = "claude-3-5-sonnet" }
+    }
+
+    phases {
+        phase("discovery") {
+            instructions { "Help the user find products." }
+            tool(SearchTool())
+            onCondition("user wants to checkout", targetPhase = "checkout")
         }
-    }
 
-    prompt {
-        default { "You are an Android finance copilot." }
-        enforce { "Never perform sensitive actions without confirmation." }
-    }
-
-    tools {
-        register(GetCurrentLocationTool(context))
-        register(UploadReceiptScreenshotTool(api))
-        register(UpdateExpenseSummaryTool(firebase))
-    }
-
-    config {
-        requireConfirmationForSensitive = true
-        responseCache = true
+        phase("checkout") {
+            instructions { "Collect shipping and payment info." }
+            tool(PaymentTool()) // CRITICAL level -> triggers Dialog
+            onCondition("payment complete", targetPhase = "discovery")
+        }
     }
 }
 ```
 
-Today that DSL powers chat sessions and tool execution. The longer-term direction is broader orchestration:
-- routines or phases layered on top of the same runtime
-- multi-step permission flows for sensitive capabilities
-- Android intents, screenshots, device APIs, and backend mutations coordinated in one tool graph
-- intelligent execution paths that do not force the developer into a single chat-screen UX
+## ✨ Current Capabilities
 
-That direction matters for the architecture in this repo: `core` stays headless, `ui` stays optional, and Android integrations live behind explicit tools instead of hard-coded widgets.
+- **Core Engine**: Fully aligned with Koog `0.7.2` using modern `TypeToken` and `AIAgent` graph APIs.
+- **Multi-Phase Transitions**: Automatic tool-based state management driven by the LLM.
+- **Theme-Agnostic UI**: `KoogChatTheme` with `LocalChatColors` and `LocalChatShapes` for 100% manual UI customization.
+- **Modern Chat Primitives**: `ChatInputBar` with paper-envelope send icons and `leading/trailing` action slots for voice/media.
+- **Security**: Robust `PermissionManager` coordinating framework permissions (SAFE/CRITICAL) and system-level OS permissions.
+- **Testing**: `ScriptedAIProvider` for deterministic UI testing in CMP environments.
 
-## Current Capabilities
-
-- Koog `0.7.2` bridge adapted in `core`
-- string-based provider config for OpenAI, Anthropic, Google, Ollama, and router modes
-- secure tool execution with audit logging and confirmation for sensitive tools
-- tool-call loop that appends call/result messages and resumes the assistant turn
-- Compose `rememberChatState(...)` overloads that work with either an explicit provider or a `KoogComposeContext`
-- Material 3 `ChatMessageList` and `ChatInputBar` primitives
-- Android location tool in `koog-compose-device`
-- scripted provider and fake tools in `koog-compose-testing`
-- Android sample app that runs in demo mode without API keys
-
-## Module Guide
+## 📦 Module Guide
 
 ### `koog-compose-core`
-
-Owns the runtime:
-- `KoogComposeContext`
-- provider creation and Koog adapter
-- prompt stack and session context
-- secure tool registry
-- `ChatSession` with tool confirmation and result replay
-
-This is the layer to build future routine/phase orchestration on top of.
+The "Brain". Owns the `KoogComposeContext`, Phase-aware `ChatSession`, and the Koog graph bridge. Shared logic for all platforms.
 
 ### `koog-compose-ui`
-
-Owns Compose adapters, not the runtime itself:
-- `rememberChatState(provider, context, userId)`
-- `rememberChatState(context, userId)`
-- `rememberChatState(userId) { ... }`
-- `ConfirmationObserver`
-- `ChatMessageList`
-- `ChatInputBar`
-
-The UI module is intentionally light. It exposes primitives and state holders instead of a single opinionated full-screen scaffold.
+The "Face". Material 3 adapters, slots for custom media/voice, and the `KoogChatTheme` provider.
 
 ### `koog-compose-device`
-
-Android-only device integrations.
-
-This pass ships one real tool:
-- `GetCurrentLocationTool`
-
-Camera, WorkManager, intents, and multi-permission orchestration are intentionally deferred until they have concrete APIs and tests.
+The "Body". Android-specific tools (Location, soon: Screenshots, Intents). Designed as a "Battery" module that you plug into Core.
 
 ### `koog-compose-testing`
+The "Lab". Scripted providers and fake tools for unit/UI testing.
 
-Deterministic helpers for tests and demos:
-- `ScriptedAIProvider`
-- `FakeSecureTool`
-- auto-approve / auto-deny confirmation handlers
+## 🛠 Build & Test
 
-### `sample-app`
-
-The official example app.
-
-It demonstrates:
-- basic send/response flow
-- sensitive tool confirmation
-- Android current-location tool
-- optional live-provider mode through local env vars or Gradle properties
-
-Supported sample configuration:
-- `KOOG_SAMPLE_PROVIDER` / `koog.sample.provider`
-- `KOOG_SAMPLE_API_KEY` / `koog.sample.apiKey`
-- `KOOG_SAMPLE_MODEL` / `koog.sample.model`
-- `KOOG_SAMPLE_BASE_URL` / `koog.sample.baseUrl`
-
-## Build
-
-Android-facing verification:
-
-```shell
-./gradlew :koog-compose-ui:compileDebugKotlinAndroid
-./gradlew :koog-compose-device:compileDebugKotlinAndroid
-./gradlew :koog-compose-testing:compileDebugKotlinAndroid
-./gradlew :sample-app:assembleDebug
-```
-
-Core tests:
-
+Core logic (commonMain):
 ```shell
 ./gradlew :koog-compose-core:desktopTest
 ```
 
-## Status
+Android verification:
+```shell
+./gradlew :sample-app:assembleDebug
+```
 
-This repo is now aligned around an Android-first KMP library shape, not a generic Compose Multiplatform starter.
-
-What is stable in this pass:
-- the runtime/tool loop
-- public Compose entry points
-- Android location integration
-- scripted demo/sample flow
-
-What is intentionally next rather than done:
-- routines/phases as first-class orchestration primitives
-- richer Android integrations such as screenshots, intents, and WorkManager-based execution
-- backend orchestration helpers for Firebase and app-specific APIs
-- broader non-Android parity
+## 🎯 What's Next
+- **Richer Android Hooks**: Built-in orchestration for `ActivityResult`, `WorkManager` background sync, and Screenshot context.
+- **iOS Parity**: Bringing the Device module tools to iOS (CLLocation, PHPicker).
+- **Backend Sinks**: Tracing exporters for Firebase and remote telemetry.
