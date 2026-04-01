@@ -26,43 +26,34 @@ import kotlinx.serialization.json.put
 /**
  * Represents the role of a message in the conversation.
  */
-  public enum class MessageRole {
-    /** Message from the user. */
+public enum class MessageRole {
     USER,
-    /** Message from the assistant (AI). */
     ASSISTANT,
-    /** System instructions or context. */
     SYSTEM,
-    /** A message representing a tool call or its result. */
     TOOL
 }
 
 /**
  * Distinguishes between a tool call request and its result.
  */
-  public enum class ToolMessageKind {
-    /** The AI is requesting to call a tool. */
+public enum class ToolMessageKind {
     CALL,
-    /** The result of a tool execution. */
     RESULT
 }
 
 /**
  * The current state of a [ChatMessage].
  */
-  public enum class MessageState {
-    /** Message is currently being sent. */
+public enum class MessageState {
     SENDING,
-    /** Content is being streamed from the provider. */
     STREAMING,
-    /** Message is fully received and processed. */
     COMPLETE,
-    /** An error occurred while processing the message. */
     ERROR
 }
 
 /**
  * Represents an attachment (image, file, or audio) in the conversation.
+ * Contains both data metadata for the LLM and display metadata for the UI.
  */
 public sealed class Attachment {
     public abstract val uri: String
