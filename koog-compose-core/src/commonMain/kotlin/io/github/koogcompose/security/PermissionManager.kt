@@ -11,37 +11,50 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonObject
 import kotlin.coroutines.resume
 
-sealed class PermissionCheckResult {
-    object Granted : PermissionCheckResult()
-    data class RequiresConfirmation(
+/**
+ * The result of a permission check for a tool execution.
+ */
+public sealed class PermissionCheckResult {
+    public object Granted : PermissionCheckResult()
+    public data class RequiresConfirmation(
         val toolName: String,
         val confirmationMessage: String,
         val permissionLevel: PermissionLevel
-    ): PermissionCheckResult()
-    data class Denied(val reason: String): PermissionCheckResult()
+    ) : PermissionCheckResult()
+    public data class Denied(val reason: String) : PermissionCheckResult()
 }
 
-
-data class PendingConfirmation(
+/**
+ * Details about a tool execution that is waiting for user confirmation.
+ */
+public data class PendingConfirmation(
     val tool: SecureTool,
     val args: JsonObject,
     val confirmationMessage: String,
     val permissionLevel: PermissionLevel
 )
 
-class PermissionManager(
+/**
+ * Manages tool execution permissions and user confirmations.
+ */
+public class PermissionManager internal constructor(
     private val auditLogger: AuditLogger,
     private val requireConfirmationForSensitive: Boolean = true,
     private val userId: String? = null
 ) {
     private val _pendingConfirmation = MutableStateFlow<PendingConfirmation?>(null)
-    val pendingConfirmation: StateFlow<PendingConfirmation?> = _pendingConfirmation.asStateFlow()
+    
+    /** A flow of the current pending confirmation, if any. */
+    public val pendingConfirmation: StateFlow<PendingConfirmation?> = _pendingConfirmation.asStateFlow()
 
     private var onConfirmed: (suspend () -> ToolResult)? = null
     private var onDenied: (suspend () -> ToolResult)? = null
     private var continuation: CancellableContinuation<ToolResult>? = null
 
-    fun check(tool: SecureTool, args: JsonObject): PermissionCheckResult {
+    /**
+     * Checks if a tool can be executed with the given arguments.
+     */
+    public fun check(tool: SecureTool, args: JsonObject): PermissionCheckResult {
         return when (tool.permissionLevel) {
             PermissionLevel.SAFE -> PermissionCheckResult.Granted
             PermissionLevel.SENSITIVE -> {
@@ -63,7 +76,10 @@ class PermissionManager(
         }
     }
 
-    suspend fun requestConfirmation(
+    /**
+     * Suspends until the user confirms or denies the tool execution.
+     */
+    internal suspend fun requestConfirmation(
         tool: SecureTool,
         args: JsonObject,
         executeBlock: suspend () -> ToolResult
@@ -87,7 +103,10 @@ class PermissionManager(
         }
     }
 
-    suspend fun onUserConfirmed(): ToolResult {
+    /**
+     * Approves the currently pending tool execution.
+     */
+    public suspend fun onUserConfirmed(): ToolResult {
         val pending = _pendingConfirmation.value
             ?: return ToolResult.Denied("No pending confirmation")
         val execute = onConfirmed
@@ -101,7 +120,10 @@ class PermissionManager(
         return result
     }
 
-    suspend fun onUserDenied(): ToolResult {
+    /**
+     * Rejects the currently pending tool execution.
+     */
+    public suspend fun onUserDenied(): ToolResult {
         val pending = _pendingConfirmation.value
             ?: return ToolResult.Denied("No pending confirmation")
         val deny = onDenied
@@ -115,10 +137,12 @@ class PermissionManager(
         return result
     }
 
-    val hasPendingConfirmation: Boolean
+    /** Returns true if there is a tool execution waiting for confirmation. */
+    public val hasPendingConfirmation: Boolean
         get() = _pendingConfirmation.value != null
 
-    fun clearPending() {
+    /** Clears any pending confirmation state. */
+    public fun clearPending() {
         _pendingConfirmation.value = null
         onConfirmed = null
         onDenied = null

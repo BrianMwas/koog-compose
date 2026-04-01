@@ -32,7 +32,7 @@ public sealed class ChatAttachment {
 /** Maps UI [ChatAttachment] to core [CoreAttachment]. */
 public fun ChatAttachment.toCore(): CoreAttachment = when (this) {
     is ChatAttachment.Image -> CoreAttachment.Image(uri)
-    is ChatAttachment.File -> CoreAttachment.Document(uri, mimeType)
+    is ChatAttachment.File -> CoreAttachment.Document(uri, displayName, mimeType)
     is ChatAttachment.Audio -> CoreAttachment.Audio(uri)
 }
 

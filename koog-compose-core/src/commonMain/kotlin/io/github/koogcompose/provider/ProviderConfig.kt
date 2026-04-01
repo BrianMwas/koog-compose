@@ -18,16 +18,16 @@ package io.github.koogcompose.provider
  * }
  * ```
  */
-sealed class ProviderConfig {
+public sealed class ProviderConfig {
 
-    data class Anthropic(
+    public data class Anthropic(
         val apiKey: String,
         val model: String = "claude-sonnet-4-5",
         val maxTokens: Int? = null,
         val temperature: Double? = null,
     ) : ProviderConfig()
 
-    data class OpenAI(
+    public data class OpenAI(
         val apiKey: String,
         val model: String = "gpt-4o",
         val baseUrl: String = "https://api.openai.com/v1",
@@ -35,7 +35,7 @@ sealed class ProviderConfig {
         val temperature: Double? = null,
     ) : ProviderConfig()
 
-    data class Google(
+    public data class Google(
         val apiKey: String,
         val model: String = "gemini-2.0-flash",
         val maxTokens: Int? = null,
@@ -54,7 +54,7 @@ sealed class ProviderConfig {
      * }
      * ```
      */
-    data class Ollama(
+    public data class Ollama(
         val model: String,
         val baseUrl: String = "http://localhost:11434",
         val maxTokens: Int? = null,
@@ -75,65 +75,65 @@ sealed class ProviderConfig {
      * }
      * ```
      */
-    data class Router(
+    public data class Router(
         val providers: List<ProviderConfig>,
         val strategy: RouterStrategy = RouterStrategy.RoundRobin,
     ) : ProviderConfig()
 }
 
-enum class RouterStrategy { RoundRobin, Fallback }
+public enum class RouterStrategy { RoundRobin, Fallback }
 
 /**
  * Builder for [ProviderConfig].
  * Used inside the `provider { }` DSL block.
  */
-class ProviderConfigBuilder {
+public class ProviderConfigBuilder {
     private var config: ProviderConfig? = null
 
-    fun anthropic(
+    public fun anthropic(
         apiKey: String,
         block: AnthropicBuilder.() -> Unit = {}
     ) {
         config = AnthropicBuilder(apiKey).apply(block).build()
     }
 
-    fun openAI(
+    public fun openAI(
         apiKey: String,
         block: OpenAIBuilder.() -> Unit = {}
     ) {
         config = OpenAIBuilder(apiKey).apply(block).build()
     }
 
-    fun google(
+    public fun google(
         apiKey: String,
         block: GoogleBuilder.() -> Unit = {}
     ) {
         config = GoogleBuilder(apiKey).apply(block).build()
     }
 
-    fun ollama(
+    public fun ollama(
         model: String,
         block: OllamaBuilder.() -> Unit = {}
     ) {
         config = OllamaBuilder(model).apply(block).build()
     }
 
-    fun router(
+    public fun router(
         strategy: RouterStrategy = RouterStrategy.RoundRobin,
         block: RouterBuilder.() -> Unit
     ) {
         config = RouterBuilder(strategy).apply(block).build()
     }
 
-    fun build(): ProviderConfig = config
+    public fun build(): ProviderConfig = config
         ?: error("koog-compose: No provider configured. Call anthropic(), openAI(), google(), or ollama() inside provider { }")
 }
 
-class AnthropicBuilder(private val apiKey: String) {
-    var model: String = "claude-sonnet-4-5"
-    var maxTokens: Int? = null
-    var temperature: Double? = null
-    fun build() = ProviderConfig.Anthropic(apiKey, model, maxTokens, temperature)
+public class AnthropicBuilder(private val apiKey: String) {
+    public var model: String = "claude-sonnet-4-5"
+    public var maxTokens: Int? = null
+    public var temperature: Double? = null
+    public fun build(): ProviderConfig = ProviderConfig.Anthropic(apiKey, model, maxTokens, temperature)
 }
 
 class OpenAIBuilder(private val apiKey: String) {

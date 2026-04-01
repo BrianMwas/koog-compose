@@ -15,21 +15,20 @@ import io.github.koogcompose.tool.toKoogTool
 
 /**
  * Builds a [KoogToolRegistry] from a [Phase] — its own tools plus transition tools.
- *
- * This is the per-subgraph tool set passed to `subgraph(tools = ...)` in
- * [PhaseStrategyBuilder]. Not the same as the agent-level global registry.
+ * Per-subgraph tool set passed to `subgraph(tools = ...)` in [PhaseStrategyBuilder].
  */
 internal fun Phase.buildKoogToolRegistry(): KoogToolRegistry =
     KoogToolRegistry {
         toolRegistry.all.forEach { tool(it.toKoogTool()) }
-        transitions.forEach { tool(it.toTool().toKoogTool()) }
+        transitions.forEach { transition -> tool(transition.toTool().toKoogTool()) }
     }
 
 /**
  * A named, reusable agent strategy that wraps a pre-built [AIAgentGraphStrategy].
  *
  * Use [KoogRoutine] when you want to package a complete multi-phase flow as a
- * named unit that can be instantiated multiple times with different contexts.
+ * named unit that can be instantiated multiple times with different contexts —
+ * e.g. an "onboarding" routine reused across multiple user sessions.
  *
  * ```kotlin
  * val onboardingRoutine = KoogRoutine("onboarding", myGraphStrategy)
@@ -41,26 +40,34 @@ class KoogRoutine(
     private val graphStrategy: AIAgentGraphStrategy<String, String>
 ) {
     /**
-     * Creates a [AIAgent] from this routine using [context] for configuration.
+     * Creates an [AIAgent] from this routine using [context] for configuration.
      *
-     * The returned agent uses the global tool registry from [context] and
-     * the global system prompt as the initial instruction.
+     * Uses the initial phase's instructions as the system prompt if phases
+     * are registered, otherwise falls back to the global effective instructions.
      */
     fun toAgent(
         context: KoogComposeContext,
         promptExecutor: PromptExecutor
     ): AIAgent<String, String> {
-        val provider = context.createProvider() as? KoogAIProvider
+        val provider = context.provider as? KoogAIProvider
             ?: error("koog-compose: KoogRoutine '$id' requires a KoogAIProvider.")
+
+        // Use initial phase instructions if phases exist,
+        // otherwise fall back to global instructions.
+        val systemPrompt = context.phaseRegistry.initialPhase?.resolvedInstructions
+            ?: context.resolveEffectiveInstructions()
 
         val agentConfig = AIAgentConfig(
             prompt = prompt("koog-compose-routine-$id") {
-                system(context.resolveEffectiveInstructions())
+                system(systemPrompt)
             },
             model = provider.resolveModelForConfig(),
-            maxAgentIterations = context.config.structureFixingRetries.coerceAtLeast(3),
-            missingToolsConversionStrategy = MissingToolsConversionStrategy.Missing(ToolCallDescriber.JSON),
-            responseProcessor = null,
+            // maxAgentIterations is separate from structureFixingRetries —
+            // don't conflate them. Use the dedicated config field.
+            maxAgentIterations = context.config.maxAgentIterations,
+            missingToolsConversionStrategy = MissingToolsConversionStrategy.Missing(
+                ToolCallDescriber.JSON
+            ),
             serializer = KotlinxSerializer()
         )
 

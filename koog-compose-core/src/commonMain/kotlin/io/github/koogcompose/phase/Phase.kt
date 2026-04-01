@@ -33,7 +33,7 @@ import kotlinx.serialization.json.JsonObject
  * @param transitions Possible exits from this phase, exposed as tool calls.
  * @param isInitial Whether this is the first phase the agent enters.
  */
-data class Phase(
+public data class Phase(
     val name: String,
     val instructions: String,
     val resolvedInstructions: String = instructions,
@@ -46,13 +46,13 @@ data class Phase(
  * Defines a transition from the current phase to another.
  * Exposed to the LLM as a tool call so it decides when to transition.
  */
-data class PhaseTransition(
+public data class PhaseTransition(
     val targetPhase: String,
     val conditionDescription: String,
     val toolName: String = "transition_to_$targetPhase"
 )
 
-fun PhaseTransition.toTool(): SecureTool = object : SecureTool {
+public fun PhaseTransition.toTool(): SecureTool = object : SecureTool {
     override val name: String = toolName
     override val description: String = "Transition to $targetPhase when $conditionDescription"
     override val permissionLevel: PermissionLevel = PermissionLevel.SAFE
@@ -69,11 +69,11 @@ fun PhaseTransition.toTool(): SecureTool = object : SecureTool {
  * Resolution happens lazily in [resolveToolRefs] — called by [PhaseAwareAgent]
  * after the full context is assembled.
  */
-class PhaseRegistry private constructor(
+public class PhaseRegistry private constructor(
     private val phases: Map<String, Phase>
 ) {
-    fun resolve(name: String): Phase? = phases[name]
-    val all: List<Phase> get() = phases.values.toList()
+    public fun resolve(name: String): Phase? = phases[name]
+    public val all: List<Phase> get() = phases.values.toList()
 
     /**
      * The initial phase — the first phase the agent enters.
@@ -82,7 +82,7 @@ class PhaseRegistry private constructor(
      * 1. Phase explicitly marked `initial = true`
      * 2. First phase registered (fallback)
      */
-    val initialPhase: Phase?
+    public val initialPhase: Phase?
         get() = phases.values.firstOrNull { it.isInitial }
             ?: phases.values.firstOrNull()
 
@@ -92,7 +92,7 @@ class PhaseRegistry private constructor(
      *
      * Called once by [PhaseAwareAgent] at build time — not on every turn.
      */
-    fun resolveToolRefs(globalRegistry: ToolRegistry): PhaseRegistry {
+    public fun resolveToolRefs(globalRegistry: ToolRegistry): PhaseRegistry {
         val resolved = phases.mapValues { (_, phase) ->
             phase.copy(
                 resolvedInstructions = ToolRefResolver.resolve(
@@ -104,7 +104,7 @@ class PhaseRegistry private constructor(
         return PhaseRegistry(resolved)
     }
 
-    class Builder {
+    public class Builder {
         private val phases = mutableMapOf<String, Phase>()
         private var explicitInitial: String? = null
 
@@ -117,7 +117,7 @@ class PhaseRegistry private constructor(
          *   phase is used as fallback if none is marked initial.
          * @param block Phase configuration DSL.
          */
-        fun phase(
+        public fun phase(
             name: String,
             initial: Boolean = false,
             block: PhaseBuilder.() -> Unit
@@ -133,17 +133,17 @@ class PhaseRegistry private constructor(
             }
         }
 
-        fun build(): PhaseRegistry = PhaseRegistry(phases.toMap())
+        public fun build(): PhaseRegistry = PhaseRegistry(phases.toMap())
     }
 
-    companion object {
-        val Empty = PhaseRegistry(emptyMap())
+    public companion object {
+        public val Empty: PhaseRegistry = PhaseRegistry(emptyMap())
     }
 }
 
 // ── PhaseBuilder ───────────────────────────────────────────────────────────────
 
-class PhaseBuilder(
+public class PhaseBuilder(
     private val name: String,
     private val isInitial: Boolean = false
 ) {
@@ -168,15 +168,15 @@ class PhaseBuilder(
      * [GetBalance] will be resolved to the tool's full schema when the agent
      * is built, provided GetBalance is registered in the global tools { } block.
      */
-    fun instructions(block: () -> String) {
+    public fun instructions(block: () -> String) {
         instructions = block()
     }
 
-    fun tools(block: ToolRegistry.Builder.() -> Unit) {
+    public fun tools(block: ToolRegistry.Builder.() -> Unit) {
         toolRegistryBuilder.apply(block)
     }
 
-    fun tool(tool: SecureTool) {
+    public fun tool(tool: SecureTool) {
         toolRegistryBuilder.register(tool)
     }
 
@@ -187,11 +187,11 @@ class PhaseBuilder(
      * @param on Natural language description of when to transition (seen by LLM).
      * @param targetPhase The name of the phase to move to.
      */
-    fun onCondition(on: String, targetPhase: String) {
+    public fun onCondition(on: String, targetPhase: String) {
         transitions.add(PhaseTransition(targetPhase, on))
     }
 
-    fun build() = Phase(
+    public fun build(): Phase = Phase(
         name = name,
         instructions = instructions,
         resolvedInstructions = instructions, // resolved later by PhaseRegistry.resolveToolRefs()

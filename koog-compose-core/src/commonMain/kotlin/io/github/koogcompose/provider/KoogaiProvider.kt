@@ -35,6 +35,9 @@ import ai.koog.prompt.params.LLMParams
 import ai.koog.prompt.streaming.StreamFrame
 import ai.koog.serialization.KSerializerTypeToken
 import ai.koog.serialization.annotations.InternalKoogSerializationApi
+import io.github.koogcompose.security.AuditLogger
+import io.github.koogcompose.security.GuardedTool
+import io.github.koogcompose.security.GuardrailEnforcer
 import io.github.koogcompose.session.AIResponseChunk
 import io.github.koogcompose.session.Attachment
 
@@ -64,9 +67,20 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlin.time.Clock
 
-internal class KoogAIProvider(
-    private val context: KoogComposeContext
+internal class KoogAIProvider<S>(
+    private val context: KoogComposeContext<S>
 ) : AIProvider {
+    private val enforcer: GuardrailEnforcer by lazy {
+        GuardrailEnforcer(
+            guardrails = context.config.guardrails,
+            auditLogger = AuditLogger(context.config.auditLoggingEnabled)
+        )
+    }
+
+    // Wraps every SecureTool with the enforcer before use
+    private fun List<SecureTool>.guarded(): List<SecureTool> =
+        map { GuardedTool(it, enforcer) }
+
     private val executor: PromptExecutor by lazy {
         val base = buildExecutor(context.providerConfig)
         if (context.config.responseCache) {
@@ -81,13 +95,13 @@ internal class KoogAIProvider(
 
     private var roundRobinIndex: Int = 0
 
-    override fun stream(
-        context: KoogComposeContext,
+    override fun <S> stream(
+        context: KoogComposeContext<S>,
         history: List<ChatMessage>,
         systemPrompt: String,
         attachments: List<Attachment>
     ): Flow<AIResponseChunk> = flow {
-        val koogTools = buildKoogToolRegistry(context.resolveEffectiveTools())
+        val koogTools = buildKoogToolRegistry(context.resolveEffectiveTools().guarded())
         val toolDescriptors = koogTools.tools.map { it.descriptor }
         val effectiveHistory = history.withPendingAttachments(attachments)
         val attempts = providerAttempts(context.providerConfig)
