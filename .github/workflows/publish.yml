@@ -3,78 +3,99 @@ name: Publish to Maven Central
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'       # v1.0.0
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'      # v1.0.0-beta01, v1.0.0-rc1
+
+permissions:
+  contents: write                        # required to create GitHub Releases
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false             # never cancel a publish mid-flight
 
 jobs:
+  # ── 1. Test on all platforms ─────────────────────────────────────────────
   test:
+    name: Test / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: true                   # abort sibling runners on first failure
       matrix:
         os: [ubuntu-latest, macos-latest]
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle                 # built-in Gradle cache — no extra step needed
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v3
 
       - name: Run tests
-        run: ./gradlew test --no-configuration-cache
+        run: ./gradlew allTests --no-configuration-cache --stacktrace
 
+  # ── 2. Publish to Maven Central ──────────────────────────────────────────
   publish:
-    needs: test
-    runs-on: macos-latest
-    environment: production
+    name: Publish to Maven Central
+    needs: test                         # only runs if ALL test matrix jobs pass
+    runs-on: macos-latest               # macOS required to compile iOS KMP targets
+    environment: production             # requires approval + scoped secrets
+
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Extract version from tag
-        id: extract_version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
-
-      - name: Set up JDK
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
+          cache: gradle
 
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v3
 
-      - name: Publish to Sonatype
-        run: ./gradlew publishAllPublicationsToSonatypeRepository --no-configuration-cache -PVERSION_NAME=${{ steps.extract_version.outputs.VERSION }}
+      - name: Extract version from tag
+        id: version
+        run: |
+          TAG="${{ github.ref_name }}"
+          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish
         env:
+          VERSION_NAME: ${{ steps.version.outputs.VERSION }}
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
+        run: |
+          ./gradlew publishAllPublicationsToSonatypeRepository \
+            -PVERSION_NAME=$VERSION_NAME \
+            --no-configuration-cache \
+            --stacktrace
 
-      - name: Create GitHub Release
-        uses: softprops/action-create-release@v1
+  # ── 3. Create GitHub Release ─────────────────────────────────────────────
+  release:
+    name: Create GitHub Release
+    needs: publish                      # only runs after successful publish
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2          # correct action name
         with:
-          tag_name: ${{ github.ref }}
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
           draft: false
-          prerelease: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          prerelease: ${{ contains(github.ref_name, '-') }}  # beta/rc tags → pre-release
+          generate_release_notes: true                # auto-generates notes from commits
+          token: ${{ secrets.GITHUB_TOKEN }}          # must be in `with`, not `env`
