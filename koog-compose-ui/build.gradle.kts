@@ -6,7 +6,7 @@ plugins {
     alias(libs.plugins.composeMultiplatform)
     alias(libs.plugins.composeCompiler)
     alias(libs.plugins.dokka)
-    `publish-convention`
+    id("publish-convention")
 }
 
 kotlin {
@@ -41,7 +41,7 @@ kotlin {
             implementation(libs.androidx.lifecycle.runtime.compose)
             implementation(libs.coil.compose)
             
-            // Material Icons
+            // Material Icons for multiplatform
             implementation(compose.materialIconsExtended)
         }
         commonTest.dependencies {

@@ -6,7 +6,7 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.androidx.room)
     alias(libs.plugins.dokka)
-    `publish-convention`
+    id("publish-convention")
 }
 
 kotlin {

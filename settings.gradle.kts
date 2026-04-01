@@ -32,6 +32,9 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
+// Composite build for convention plugins
+includeBuild("build-logic")
+
 // Library modules
 include(":koog-compose-core")
 include(":koog-compose-ui")

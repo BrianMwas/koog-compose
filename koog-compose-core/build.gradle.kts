@@ -5,7 +5,7 @@ plugins {
     alias(libs.plugins.kotlinSerialization)
     alias(libs.plugins.androidLibrary)
     alias(libs.plugins.dokka)
-    `publish-convention` 
+    id("publish-convention") 
 }
 
 kotlin {

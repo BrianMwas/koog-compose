@@ -4,7 +4,7 @@ plugins {
     alias(libs.plugins.kotlinMultiplatform)
     alias(libs.plugins.androidLibrary)
     alias(libs.plugins.dokka)
-    `publish-convention`
+    id("publish-convention")
 }
 
 kotlin {
