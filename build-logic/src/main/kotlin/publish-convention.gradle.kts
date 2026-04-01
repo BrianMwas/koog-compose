@@ -32,7 +32,7 @@ publishing {
         pom {
             name.set(POM_NAME)
             description.set(POM_DESCRIPTION)
-            url.set("https://github.com/brianmw/koog-compose")
+            url.set("https://github.com/brianmwas/koog-compose")
             inceptionYear.set("2025")
 
             licenses {
@@ -45,21 +45,21 @@ publishing {
 
             developers {
                 developer {
-                    id.set("brianmw")
+                    id.set("brianmwas")
                     name.set("Brian")
-                    url.set("https://github.com/brianmw")
+                    url.set("https://github.com/brianmwas")
                 }
             }
 
             scm {
-                url.set("https://github.com/brianmw/koog-compose")
-                connection.set("scm:git:git://github.com/brianmw/koog-compose.git")
-                developerConnection.set("scm:git:ssh://git@github.com/brianmw/koog-compose.git")
+                url.set("https://github.com/brianmwas/koog-compose")
+                connection.set("scm:git:git://github.com/brianmwas/koog-compose.git")
+                developerConnection.set("scm:git:ssh://git@github.com/brianmwas/koog-compose.git")
             }
 
             issueManagement {
                 system.set("GitHub Issues")
-                url.set("https://github.com/brianmw/koog-compose/issues")
+                url.set("https://github.com/brianmwas/koog-compose/issues")
             }
         }
     }
