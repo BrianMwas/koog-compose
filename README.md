@@ -4,64 +4,94 @@
 
 While Android-first in its integration depth, the library is architected for **Compose Multiplatform (CMP)** to ensure cross-platform stability and portability.
 
-## 🚀 Recent v1 Milestone Updates
+## 🏁 Getting Started
 
-We've recently shifted from a basic tool loop to a **Structured Orchestration Framework**. Key highlights:
+To get started with `koog-compose`, follow these steps to set up your runtime and UI.
 
-- **Phases & Conversation Graphs**: The conversation is now a state machine. The LLM can self-transition between "Phases" (Discovery, Payment, Support) using auto-generated transition tools.
-- **5-Star Security & UX**: Added an `AutoConfirmationHandler` that automatically selects the right UI friction (Snackbar for SENSITIVE tools, Dialog for CRITICAL tools) based on `PermissionLevel`.
-- **Plug-and-Play Persistence**: Refactored Room storage into an "Autonomous Battery" mode. Users can plug their own DAO into the session without being forced into a specific database file or configuration.
-- **Enhanced Tracing & Telemetry**: Added a native `KoogEventBus` with support for `TracingSink`s. Ready-to-use `ConsoleTracingSink` included for Logcat/Console debugging.
-- **Scripted Determinism**: The testing provider now supports `PhaseValidation`, allowing you to assert that the AI is in the correct state before returning scripted responses.
+### 1. Installation
 
-## 🏗 Design Direction
+Add the following to your `build.gradle.kts` (available on Maven Central soon):
 
-The runtime is intentionally headless. Developers layer familiar syntax on top of it:
+```kotlin
+dependencies {
+    implementation("io.github.koogcompose:core:1.0.0")
+    implementation("io.github.koogcompose:ui:1.0.0") // Optional: for Compose UI
+    implementation("io.github.koogcompose:device:1.0.0") // Optional: for Android/iOS tools
+}
+```
+
+### 2. Configure your Context
+
+Use the `koogCompose` DSL to define your AI's provider, rules, and tools.
 
 ```kotlin
 val context = koogCompose {
+    // 1. Choose your LLM
     provider {
-        anthropic(apiKey = BuildConfig.ANTHROPIC_KEY) { model = "claude-3-5-sonnet" }
+        anthropic(apiKey = "your-key") { model = "claude-3-5-sonnet" }
     }
 
+    // 2. Define conversation phases
     phases {
-        phase("discovery") {
-            instructions { "Help the user find products." }
-            tool(SearchTool())
-            onCondition("user wants to checkout", targetPhase = "checkout")
+        phase("greeting") {
+            instructions { "Greet the user and offer to check their location." }
+            onCondition("user asks for location", targetPhase = "location_check")
         }
 
-        phase("checkout") {
-            instructions { "Collect shipping and payment info." }
-            tool(PaymentTool()) // CRITICAL level -> triggers Dialog
-            onCondition("payment complete", targetPhase = "discovery")
+        phase("location_check") {
+            instructions { "You now have access to the user's GPS." }
+            tool(GetCurrentLocationTool(androidContext)) // From :device module
         }
     }
 }
 ```
 
-## ✨ Current Capabilities
+### 3. Integrate with Compose UI
 
-- **Core Engine**: Fully aligned with Koog `0.7.2` using modern `TypeToken` and `AIAgent` graph APIs.
-- **Multi-Phase Transitions**: Automatic tool-based state management driven by the LLM.
-- **Theme-Agnostic UI**: `KoogChatTheme` with `LocalChatColors` and `LocalChatShapes` for 100% manual UI customization.
-- **Modern Chat Primitives**: `ChatInputBar` with paper-envelope send icons and `leading/trailing` action slots for voice/media.
-- **Security**: Robust `PermissionManager` coordinating framework permissions (SAFE/CRITICAL) and system-level OS permissions.
-- **Testing**: `ScriptedAIProvider` for deterministic UI testing in CMP environments.
+`koog-compose-ui` provides high-level state holders and Material 3 components.
+
+```kotlin
+@Composable
+fun MyChatScreen() {
+    // Create stable chat state
+    val chatState = rememberChatState(context)
+
+    // Wire automatic confirmation (SAFE/SENSITIVE/CRITICAL logic)
+    val snackbarHostState = remember { SnackbarHostState() }
+    ConfirmationObserver(
+        chatState = chatState,
+        handler = rememberAutoConfirmationHandler(snackbarHostState)
+    )
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+        bottomBar = { ChatInputBar(chatState) }
+    ) { padding ->
+        ChatMessageList(chatState, modifier = Modifier.padding(padding))
+    }
+}
+```
+
+## 🚀 Recent v1 Milestone Updates
+
+- **Phases & Conversation Graphs**: The conversation is now a state machine. The LLM can self-transition between "Phases" using auto-generated transition tools.
+- **5-Star Security & UX**: Added an `AutoConfirmationHandler` that automatically selects the right UI friction (Snackbar vs. Dialog).
+- **Plug-and-Play Persistence**: Refactored Room storage into an "Autonomous Battery" mode. Plug your own DAO into the session.
+- **Enhanced Tracing & Telemetry**: Added a native `KoogEventBus` with support for `TracingSink`s.
 
 ## 📦 Module Guide
 
 ### `koog-compose-core`
-The "Brain". Owns the `KoogComposeContext`, Phase-aware `ChatSession`, and the Koog graph bridge. Shared logic for all platforms.
+The "Brain". Owns the `KoogComposeContext`, Phase-aware `ChatSession`, and the Koog graph bridge.
 
 ### `koog-compose-ui`
-The "Face". Material 3 adapters, slots for custom media/voice, and the `KoogChatTheme` provider.
+The "Face". Material 3 adapters, slots for custom media/voice, and the `KoogChatTheme`.
 
 ### `koog-compose-device`
-The "Body". Android-specific tools (Location, soon: Screenshots, Intents). Designed as a "Battery" module that you plug into Core.
+The "Body". Android-specific tools (Location, soon: Screenshots, Intents).
 
-### `koog-compose-testing`
-The "Lab". Scripted providers and fake tools for unit/UI testing.
+### `koog-compose-session-room`
+The "Memory". A pluggable KMP battery for persistent AI memory using Room.
 
 ## 🛠 Build & Test
 
@@ -76,6 +106,6 @@ Android verification:
 ```
 
 ## 🎯 What's Next
-- **Richer Android Hooks**: Built-in orchestration for `ActivityResult`, `WorkManager` background sync, and Screenshot context.
+- **Richer Android Hooks**: ActivityResult, WorkManager, and Screenshot context.
 - **iOS Parity**: Bringing the Device module tools to iOS (CLLocation, PHPicker).
 - **Backend Sinks**: Tracing exporters for Firebase and remote telemetry.
