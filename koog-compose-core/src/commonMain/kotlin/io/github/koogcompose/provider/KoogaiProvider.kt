@@ -37,13 +37,13 @@ import ai.koog.serialization.KSerializerTypeToken
 import ai.koog.serialization.annotations.InternalKoogSerializationApi
 import io.github.koogcompose.session.AIResponseChunk
 import io.github.koogcompose.session.Attachment
+
 import io.github.koogcompose.session.ChatMessage
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.MessageRole
 import io.github.koogcompose.session.ToolMessageKind
 import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolResult
-import io.github.koogcompose.tool.toKoogTool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -256,23 +256,23 @@ internal fun buildKoogToolRegistry(tools: List<SecureTool>): ToolRegistry {
     }
 }
 
-//@OptIn(InternalKoogSerializationApi::class)
-//internal fun SecureTool.toKoogTool(): Tool<JsonObject, String> {
-//    val descriptor = toKoogToolDescriptor()
-//    return object : Tool<JsonObject, String>(
-//        argsType = KSerializerTypeToken(JsonObject.serializer()),
-//        resultType = KSerializerTypeToken(String.serializer()),
-//        descriptor = descriptor
-//    ) {
-//        override suspend fun execute(args: JsonObject): String {
-//            return when (val result = this@toKoogTool.execute(args)) {
-//                is ToolResult.Success -> result.output
-//                is ToolResult.Denied -> "Denied: ${result.reason}"
-//                is ToolResult.Failure -> "Error: ${result.message}"
-//            }
-//        }
-//    }
-//}
+@OptIn(InternalKoogSerializationApi::class)
+internal fun SecureTool.toKoogTool(): Tool<JsonObject, String> {
+    val descriptor = toKoogToolDescriptor()
+    return object : Tool<JsonObject, String>(
+        argsType = KSerializerTypeToken(JsonObject.serializer()),
+        resultType = KSerializerTypeToken(String.serializer()),
+        descriptor = descriptor
+    ) {
+        override suspend fun execute(args: JsonObject): String {
+            return when (val result = this@toKoogTool.execute(args)) {
+                is ToolResult.Success -> result.output
+                is ToolResult.Denied -> "Denied: ${result.reason}"
+                is ToolResult.Failure -> "Error: ${result.message}"
+            }
+        }
+    }
+}
 
 internal fun SecureTool.toKoogToolDescriptor(): ToolDescriptor {
     val schema = parametersSchema

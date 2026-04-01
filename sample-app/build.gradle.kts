@@ -42,6 +42,7 @@ kotlin {
             implementation(project(":koog-compose-ui"))
             implementation(project(":koog-compose-device"))
             implementation(project(":koog-compose-testing"))
+            implementation(project(":koog-compose-session-room")) // Added for persistence parity
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.core.ktx)
             implementation(libs.compose.uiToolingPreview)

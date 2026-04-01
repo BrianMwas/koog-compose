@@ -26,56 +26,71 @@ import kotlinx.serialization.json.put
 /**
  * Represents the role of a message in the conversation.
  */
-  enum class MessageRole { 
+  public enum class MessageRole {
     /** Message from the user. */
-    USER, 
+    USER,
     /** Message from the assistant (AI). */
-    ASSISTANT, 
+    ASSISTANT,
     /** System instructions or context. */
-    SYSTEM, 
+    SYSTEM,
     /** A message representing a tool call or its result. */
-    TOOL 
+    TOOL
 }
 
 /**
  * Distinguishes between a tool call request and its result.
  */
-  enum class ToolMessageKind { 
+  public enum class ToolMessageKind {
     /** The AI is requesting to call a tool. */
-    CALL, 
+    CALL,
     /** The result of a tool execution. */
-    RESULT 
+    RESULT
 }
 
 /**
  * The current state of a [ChatMessage].
  */
-  enum class MessageState { 
+  public enum class MessageState {
     /** Message is currently being sent. */
-    SENDING, 
+    SENDING,
     /** Content is being streamed from the provider. */
-    STREAMING, 
+    STREAMING,
     /** Message is fully received and processed. */
-    COMPLETE, 
+    COMPLETE,
     /** An error occurred while processing the message. */
-    ERROR 
+    ERROR
+}
+
+/**
+ * Represents an attachment (image, file, or audio) in the conversation.
+ */
+public sealed class Attachment {
+    public abstract val uri: String
+    public abstract val displayName: String
+
+    public data class Image(
+        override val uri: String,
+        override val displayName: String = "Image",
+    ) : Attachment()
+
+    public data class Document(
+        override val uri: String,
+        override val displayName: String,
+        val mimeType: String,
+        val sizeBytes: Long? = null,
+    ) : Attachment()
+
+    public data class Audio(
+        override val uri: String,
+        override val displayName: String = "Voice message",
+        val durationMs: Long? = null,
+    ) : Attachment()
 }
 
 /**
  * A message within a [ChatSession].
- * 
- * @property id Unique identifier for the message.
- * @property role The [MessageRole] of the sender.
- * @property content The text content of the message.
- * @property state The current [MessageState].
- * @property attachments Any attachments associated with the message.
- * @property toolCallsUsed Names of tools called during the generation of this message.
- * @property toolName The name of the tool (if [role] is [MessageRole.TOOL]).
- * @property toolCallId The ID of the tool call (if [role] is [MessageRole.TOOL]).
- * @property toolKind The [ToolMessageKind] (if [role] is [MessageRole.TOOL]).
- * @property timestampMs Epoch timestamp in milliseconds.
  */
-  data class ChatMessage(
+public data class ChatMessage(
     val id: String,
     val role: MessageRole,
     val content: String,
@@ -88,75 +103,27 @@ import kotlinx.serialization.json.put
     val timestampMs: Long
 )
 
-/*
- * UI-specific models for attachments, used within the Compose layer.
- * These provide extra metadata like display names and sizes for the UI.
- */
-sealed class ChatAttachment {
-    abstract val uri: String
-    abstract val displayName: String
-
-    data class Image(
-        override val uri: String,
-        override val displayName: String = "Image",
-    ) : ChatAttachment()
-
-    data class File(
-        override val uri: String,
-        override val displayName: String,
-        val mimeType: String,
-        val sizeBytes: Long? = null,
-    ) : ChatAttachment()
-
-    data class Audio(
-        override val uri: String,
-        override val displayName: String = "Voice message",
-        val durationMs: Long? = null,
-    ) : ChatAttachment()
-}
-
-/** Maps UI [ChatAttachment] to core [CoreAttachment]. */
-fun ChatAttachment.toCore(): CoreAttachment = when (this) {
-    is ChatAttachment.Image -> CoreAttachment.Image(uri)
-    is ChatAttachment.File -> CoreAttachment.Document(uri, mimeType)
-    is ChatAttachment.Audio -> CoreAttachment.Audio(uri)
-}
-
-/** Maps core [CoreAttachment] to UI [ChatAttachment]. */
-fun CoreAttachment.toUI(): ChatAttachment = when (this) {
-    is CoreAttachment.Image -> ChatAttachment.Image(uri)
-    is CoreAttachment.Document -> ChatAttachment.File(uri, uri.substringAfterLast('/'), mimeType)
-    is CoreAttachment.Audio -> ChatAttachment.Audio(uri)
-}
-
-
 /**
  * Chunks of data received during streaming from an [AIProvider].
  */
-  sealed class AIResponseChunk {
-    /** A fragment of generated text. */
-      data class TextDelta(val text: String) : AIResponseChunk()
-    /** Final complete text. */
-      data class TextComplete(val text: String) : AIResponseChunk()
-    /** A fragment of internal reasoning/thought. */
-      data class ReasoningDelta(val text: String) : AIResponseChunk()
-    /** A request to call a tool. */
-      data class ToolCallRequest(
+public sealed class AIResponseChunk {
+    public data class TextDelta(val text: String) : AIResponseChunk()
+    public data class TextComplete(val text: String) : AIResponseChunk()
+    public data class ReasoningDelta(val text: String) : AIResponseChunk()
+    public data class ToolCallRequest(
         val toolCallId: String?,
         val toolName: String,
         val args: JsonObject
     ) : AIResponseChunk()
 
-    /** Signal that the stream has ended. */
-      object End : AIResponseChunk()
-    /** An error occurred during streaming. */
-      data class Error(val message: String) : AIResponseChunk()
+    public object End : AIResponseChunk()
+    public data class Error(val message: String) : AIResponseChunk()
 }
 
 /**
  * The state of a [ChatSession].
  */
-  data class ChatSessionState(
+public data class ChatSessionState(
     val messages: List<ChatMessage> = emptyList(),
     val isStreaming: Boolean = false,
     val streamingContent: String = "",
@@ -165,39 +132,41 @@ fun CoreAttachment.toUI(): ChatAttachment = when (this) {
     val activePhaseName: String? = null,
 )
 
-
+/**
+ * Interface for AI providers that support streaming responses.
+ */
+public interface AIProvider {
+    public fun stream(
+        context: KoogComposeContext,
+        history: List<ChatMessage>,
+        systemPrompt: String,
+        attachments: List<Attachment> = emptyList()
+    ): Flow<AIResponseChunk>
+}
 
 /**
  * Manages a single chat conversation.
- * 
- * This class orchestrates the interaction between the user, the [AIProvider], 
- * the [ToolRegistry], and the [PermissionManager].
  */
-  class ChatSession internal constructor(
-      val initialContext: KoogComposeContext,
+public class ChatSession internal constructor(
+    public val initialContext: KoogComposeContext,
     private val provider: AIProvider,
     private val scope: CoroutineScope,
     private val userId: String? = null,
     private val idGenerator: () -> String = { randomId() }
 ) {
     private val _currentContext = MutableStateFlow(initialContext)
-    /** The active context for this session, which may change (e.g., during phase transitions). */
-      val currentContext: StateFlow<KoogComposeContext> = _currentContext.asStateFlow()
+    public val currentContext: StateFlow<KoogComposeContext> = _currentContext.asStateFlow()
 
     private val _state = MutableStateFlow(
         ChatSessionState(activePhaseName = initialContext.activePhaseName)
     )
-    /** The current UI state of the chat. */
-      val state: StateFlow<ChatSessionState> = _state.asStateFlow()
+    public val state: StateFlow<ChatSessionState> = _state.asStateFlow()
 
     private val _chunks = MutableSharedFlow<AIResponseChunk>(extraBufferCapacity = 256)
-    /** Emits raw response chunks as they arrive from the provider. */
-      val chunks: SharedFlow<AIResponseChunk> = _chunks.asSharedFlow()
+    public val chunks: SharedFlow<AIResponseChunk> = _chunks.asSharedFlow()
 
-    /** Logger for auditing tool executions. */
-      val auditLogger: AuditLogger = AuditLogger()
-    /** Manager for tool execution permissions. */
-      val permissionManager: PermissionManager = PermissionManager(
+    public val auditLogger: AuditLogger = AuditLogger()
+    public val permissionManager: PermissionManager = PermissionManager(
         auditLogger = auditLogger,
         requireConfirmationForSensitive = initialContext.config.requireConfirmationForSensitive,
         userId = userId
@@ -206,8 +175,7 @@ fun CoreAttachment.toUI(): ChatAttachment = when (this) {
     private var activeJob: Job? = null
     private val rateLimiter = RateLimiter(initialContext.config.rateLimitPerMinute)
 
-    /** Sends a message to the AI. */
-      fun send(text: String, attachments: List<Attachment> = emptyList()) {
+    public fun send(text: String, attachments: List<Attachment> = emptyList()) {
         if (text.isBlank() && attachments.isEmpty()) return
         cancel()
         activeJob = scope.launch {
@@ -220,16 +188,14 @@ fun CoreAttachment.toUI(): ChatAttachment = when (this) {
         }
     }
 
-    /** Cancels the current AI generation or tool execution. */
-      fun cancel() {
+    public fun cancel() {
         activeJob?.cancel()
         activeJob = null
         permissionManager.clearPending()
         _state.update { it.copy(isStreaming = false, streamingContent = "") }
     }
 
-    /** Regenerates the last assistant message. */
-      fun regenerate() {
+    public fun regenerate() {
         val messages = _state.value.messages
         val lastUserIndex = messages.indexOfLast { it.role == MessageRole.USER }
         if (lastUserIndex == -1) return
@@ -247,22 +213,18 @@ fun CoreAttachment.toUI(): ChatAttachment = when (this) {
         send(lastUser.content, lastUser.attachments)
     }
 
-    /** Clears the conversation history. */
-      fun clearHistory() {
+    public fun clearHistory() {
         cancel()
         _state.update { ChatSessionState(activePhaseName = _currentContext.value.activePhaseName) }
     }
 
-    /** Confirms a pending tool execution. */
-      suspend fun confirmPendingToolExecution(): ToolResult =
+    public suspend fun confirmPendingToolExecution(): ToolResult =
         permissionManager.onUserConfirmed()
 
-    /** Denies a pending tool execution. */
-      suspend fun denyPendingToolExecution(): ToolResult =
+    public suspend fun denyPendingToolExecution(): ToolResult =
         permissionManager.onUserDenied()
 
-    /** Returns a new session with additional context. */
-      fun withContext(additionalContext: String): ChatSession {
+    public fun withContext(additionalContext: String): ChatSession {
         return ChatSession(
             initialContext = _currentContext.value.withSessionContext(additionalContext),
             provider = provider,
@@ -373,7 +335,6 @@ fun CoreAttachment.toUI(): ChatAttachment = when (this) {
     }
 
     private suspend fun executeToolCall(request: AIResponseChunk.ToolCallRequest): ToolExecutionOutcome {
-        // Intercept phase transitions
         if (request.toolName.startsWith("transition_to_")) {
             val targetPhase = request.toolName.removePrefix("transition_to_")
             if (_currentContext.value.phaseRegistry.resolve(targetPhase) != null) {
@@ -395,7 +356,6 @@ fun CoreAttachment.toUI(): ChatAttachment = when (this) {
             )
         )
 
-        // Merge effective tools (Phase-specific + Global)
         val tool = _currentContext.value.resolveEffectiveTools().find { it.name == request.toolName }
         
         val result = when {
@@ -505,8 +465,7 @@ fun CoreAttachment.toUI(): ChatAttachment = when (this) {
         }
     }
 
-    /** Closes the session and releases resources. */
-      fun close() {
+    public fun close() {
         activeJob?.cancel()
         activeJob = null
         permissionManager.clearPending()

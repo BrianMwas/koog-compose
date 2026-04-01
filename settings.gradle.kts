@@ -39,5 +39,18 @@ include(":koog-compose-device")
 include(":koog-compose-testing")
 include(":koog-compose-session-room")
 
+// Android Control Batteries
+include(":koog-compose-android-workmanager")
+include(":koog-compose-android-alarmmanager")
+include(":koog-compose-android-notifications")
+include(":koog-compose-android-connectivity")
+include(":koog-compose-android-sensors")
+include(":koog-compose-android-intents")
+
+// iOS Control Batteries
+include(":koog-compose-ios-backgroundtasks")
+include(":koog-compose-ios-usernotifications")
+include(":koog-compose-ios-healthkit")
+
 // Sample app to test the library locally
 include(":sample-app")
