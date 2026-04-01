@@ -1,6 +1,6 @@
 # koog-compose
 
-[![Maven Central](https://img.shields.io/maven-central/v/io.github.koogcompose/core?label=Maven%20Central)](https://central.sonatype.com/search?q=koog-compose)
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.brianmwas.koog_compose/koog-compose-core?label=Maven%20Central)](https://central.sonatype.com/search?q=io.github.brianmwas.koog_compose)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Kotlin](https://img.shields.io/badge/kotlin-2.1.0-purple.svg)](https://kotlinlang.org)
 [![KMP](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen.svg)](https://www.jetbrains.com/kotlin-multiplatform/)
@@ -25,10 +25,10 @@ Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges 
 ## Modules
 
 ```
-io.github.koogcompose:core          ← DSL, agent runtime, phase engine   (required)
-io.github.koogcompose:ui            ← Material 3 Compose components       (optional)
-io.github.koogcompose:device        ← Android/iOS device tools            (optional)
-io.github.koogcompose:session-room  ← Room-backed persistent memory       (optional)
+io.github.brianmwas.koog_compose:koog-compose-core          ← DSL, agent runtime, phase engine   (required)
+io.github.brianmwas.koog_compose:koog-compose-ui            ← Material 3 Compose components       (optional)
+io.github.brianmwas.koog_compose:koog-compose-device        ← Android/iOS device tools            (optional)
+io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed persistent memory       (optional)
 ```
 
 ---
@@ -39,10 +39,10 @@ Add to your `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("io.github.koogcompose:core:1.0.0")
-    implementation("io.github.koogcompose:ui:1.0.0")            // Compose UI components
-    implementation("io.github.koogcompose:device:1.0.0")        // Android/iOS device tools
-    implementation("io.github.koogcompose:session-room:1.0.0")  // Persistent memory via Room
+    implementation("io.github.brianmwas.koog_compose:koog-compose-core:0.1.0")
+    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:0.1.0")            // Compose UI components
+    implementation("io.github.brianmwas.koog_compose:koog-compose-device:0.1.0")        // Android/iOS device tools
+    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:0.1.0")  // Persistent memory via Room
 }
 ```
 
