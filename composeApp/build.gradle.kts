@@ -62,7 +62,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
-        versionName = "1.0"
+        versionName = providers.gradleProperty("VERSION_NAME").getOrElse("0.1.0")
     }
     packaging {
         resources {
@@ -91,7 +91,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
             packageName = "io.github.koogcompose"
-            packageVersion = "1.0.0"
+            packageVersion = providers.gradleProperty("VERSION_NAME").getOrElse("0.1.0")
         }
     }
 }

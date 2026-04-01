@@ -41,16 +41,16 @@ include(":koog-compose-session-room")
 
 // Android Control Batteries
 include(":koog-compose-android-workmanager")
-include(":koog-compose-android-alarmmanager")
-include(":koog-compose-android-notifications")
-include(":koog-compose-android-connectivity")
-include(":koog-compose-android-sensors")
-include(":koog-compose-android-intents")
+// include(":koog-compose-android-alarmmanager")        // Future
+// include(":koog-compose-android-notifications")       // Future
+// include(":koog-compose-android-connectivity")        // Future
+// include(":koog-compose-android-sensors")             // Future
+// include(":koog-compose-android-intents")             // Future
 
 // iOS Control Batteries
-include(":koog-compose-ios-backgroundtasks")
-include(":koog-compose-ios-usernotifications")
-include(":koog-compose-ios-healthkit")
+// include(":koog-compose-ios-backgroundtasks")         // Future
+// include(":koog-compose-ios-usernotifications")       // Future
+// include(":koog-compose-ios-healthkit")               // Future
 
 // Sample app to test the library locally
 include(":sample-app")
