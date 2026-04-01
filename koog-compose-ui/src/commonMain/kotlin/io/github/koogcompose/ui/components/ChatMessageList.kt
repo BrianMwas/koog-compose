@@ -46,6 +46,32 @@ import io.github.koogcompose.ui.state.ChatState
 
 // ─── Public overloads ─────────────────────────────────────────────────────────
 
+/**
+ * Renders a scrollable list of chat messages from the current session state.
+ *
+ * This composable automatically collects the latest messages from [chatState.sessionStateFlow]
+ * and displays them in a Material Design lazy column. Messages are filtered based on their
+ * role (user, assistant, system, tool) to control what gets displayed.
+ *
+ * @param chatState The [ChatState] holding the active session and UI state.
+ * @param modifier Modifier to apply to the message list container.
+ * @param showSystemMessages If true, displays system/instruction messages (default: false).
+ * @param showToolCallMessages If true, displays tool invocation messages (default: false).
+ *        Tool result messages are always shown.
+ * @param messageContent Optional custom lambda to render each message. If null, uses [DefaultChatMessage].
+ *
+ * Example:
+ * ```kotlin
+ * ChatMessageList(
+ *     chatState = chatState,
+ *     modifier = Modifier.fillMaxSize(),
+ *     showSystemMessages = false,
+ *     messageContent = { message ->
+ *         MyCustomMessageBubble(message)
+ *     }
+ * )
+ * ```
+ */
 @Composable
 fun ChatMessageList(
     chatState: ChatState,
@@ -64,6 +90,19 @@ fun ChatMessageList(
     )
 }
 
+/**
+ * Renders a scrollable list of chat messages from a static list.
+ *
+ * This overload is useful for preview, testing, or when you already have
+ * a list of messages and want to render them directly without connecting to [ChatState].
+ *
+ * @param messages List of [ChatMessage] objects to display.
+ * @param modifier Modifier to apply to the list container.
+ * @param showSystemMessages If true, includes system/instruction messages (default: false).
+ * @param showToolCallMessages If true, includes tool call messages (default: false).
+ *        Tool results are always included.
+ * @param messageContent Optional custom composable for each message. Defaults to [DefaultChatMessage].
+ */
 @Composable
 fun ChatMessageList(
     messages: List<ChatMessage>,

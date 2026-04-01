@@ -12,6 +12,11 @@ import androidx.compose.ui.unit.dp
 
 /**
  * Colors for the Koog chat UI.
+ *
+ * Defines all colors used by chat components including message bubbles,
+ * text, timestamps, and input fields. These colors are applied via
+ * [KoogChatTheme] and can be distributed throughout your UI via Compose's
+ * CompositionLocal mechanism.
  */
 @Immutable
 public data class ChatColors(
@@ -28,6 +33,10 @@ public data class ChatColors(
 
 /**
  * Shapes for the Koog chat UI.
+ *
+ * Controls the visual shape of message bubbles and input fields.
+ * Message bubbles can have different shapes for the user (right-aligned)
+ * and assistant (left-aligned) for asymmetrical, modern chat designs.
  */
 @Immutable
 public data class ChatShapes(
@@ -38,7 +47,33 @@ public data class ChatShapes(
 
 /**
  * Entry point for customizing the Koog Chat UI theme.
- * Wrap your chat screen in this to override the default styles.
+ *
+ * Wrap your chat screen in this composable to override the default colors and shapes.
+ * The theme is distributed to child composables via [LocalChatColors] and [LocalChatShapes]
+ * CompositionLocals.
+ *
+ * Example:
+ * ```kotlin
+ * KoogChatTheme(
+ *     colors = ChatColors(
+ *         userBubble = Color(0xFF0084FF),
+ *         assistantBubble = Color(0xFFE5E5EA),
+ *         // ... other colors
+ *     ),
+ *     shapes = ChatShapes(
+ *         userBubble = RoundedCornerShape(16.dp),
+ *         assistantBubble = RoundedCornerShape(16.dp),
+ *         inputField = RoundedCornerShape(24.dp)
+ *     ),
+ *     content = {
+ *         ChatScreen()
+ *     }
+ * )
+ * ```
+ *
+ * @param colors The [ChatColors] to use (default: Material 3 adapted defaults).
+ * @param shapes The [ChatShapes] to use (default: Material 3 rounded corners).
+ * @param content The composable content that will receive the theme.
  */
 @Composable
 public fun KoogChatTheme(

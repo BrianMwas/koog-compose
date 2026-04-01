@@ -8,6 +8,34 @@ import io.github.koogcompose.session.AIProvider
 import io.github.koogcompose.session.ChatSession
 import io.github.koogcompose.session.KoogComposeContext
 
+/**
+ * Creates and remembers a stable [ChatState] from an AI provider and context.
+ *
+ * This is the recommended way to initialize chat state in Compose. It:
+ * - Creates a [ChatSession] with the given provider and context
+ * - Wraps it in a [ChatState] for UI consumption
+ * - Automatically cleans up the session when the composable leaves composition
+ * - Maintains stability across recompositions
+ *
+ * @param provider The [AIProvider] (e.g., Anthropic, OpenAI) that will handle streaming responses.
+ * @param context The [KoogComposeContext] configured with phases, tools, and instructions.
+ * @param userId Optional user identifier for multi-user scenarios or analytics.
+ * @return A stable [ChatState] instance tied to this composition.
+ *
+ * Example:
+ * ```kotlin
+ * @Composable
+ * fun ChatScreen() {
+ *     val chatState = rememberChatState(
+ *         provider = anthropicProvider,
+ *         context = koogContext,
+ *         userId = "user_123"
+ *     )
+ *     ChatMessageList(chatState)
+ *     ChatInputBar(chatState)
+ * }
+ * ```
+ */
 @Composable
 fun rememberChatState(
     provider: AIProvider,

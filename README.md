@@ -1,37 +1,73 @@
 # koog-compose
 
-`koog-compose` is a developer-first Kotlin Multiplatform (KMP) runtime for building AI-driven features that orchestrate app logic, device capabilities, and UI from a single, declarative DSL.
+[![Maven Central](https://img.shields.io/maven-central/v/io.github.koogcompose/core?label=Maven%20Central)](https://central.sonatype.com/search?q=koog-compose)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![Kotlin](https://img.shields.io/badge/kotlin-2.1.0-purple.svg)](https://kotlinlang.org)
+[![KMP](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen.svg)](https://www.jetbrains.com/kotlin-multiplatform/)
 
-While Android-first in its integration depth, the library is architected for **Compose Multiplatform (CMP)** to ensure cross-platform stability and portability.
+`koog-compose` is a developer-first Kotlin Multiplatform (KMP) runtime for building AI-driven features that orchestrate app logic, device capabilities, and UI from a single declarative DSL.
 
-## 🏁 Getting Started
+Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between AI agent graphs and real app surfaces — giving you phase-aware conversations, plug-and-play persistence, and Material 3 UI components that work across Android, iOS, and Desktop.
 
-To get started with `koog-compose`, follow these steps to set up your runtime and UI.
+---
 
-### 1. Installation
+## Why koog-compose?
 
-Add the following to your `build.gradle.kts` (available on Maven Central soon):
+| Without koog-compose | With koog-compose |
+|---|---|
+| Wire LLM calls, tool execution, and UI state manually | Single `koogCompose { }` DSL handles the entire runtime |
+| Roll your own conversation state machine | Built-in `phases { }` with LLM-driven auto-transitions |
+| Build confirmation dialogs per feature | `AutoConfirmationHandler` with SAFE / SENSITIVE / CRITICAL tiers |
+| Reinvent session persistence each project | Drop-in `session-room` battery with your own DAO |
+
+---
+
+## Modules
+
+```
+io.github.koogcompose:core          ← DSL, agent runtime, phase engine   (required)
+io.github.koogcompose:ui            ← Material 3 Compose components       (optional)
+io.github.koogcompose:device        ← Android/iOS device tools            (optional)
+io.github.koogcompose:session-room  ← Room-backed persistent memory       (optional)
+```
+
+---
+
+## Installation
+
+Add to your `build.gradle.kts`:
 
 ```kotlin
 dependencies {
     implementation("io.github.koogcompose:core:1.0.0")
-    implementation("io.github.koogcompose:ui:1.0.0") // Optional: for Compose UI
-    implementation("io.github.koogcompose:device:1.0.0") // Optional: for Android/iOS tools
+    implementation("io.github.koogcompose:ui:1.0.0")            // Compose UI components
+    implementation("io.github.koogcompose:device:1.0.0")        // Android/iOS device tools
+    implementation("io.github.koogcompose:session-room:1.0.0")  // Persistent memory via Room
 }
 ```
 
-### 2. Configure your Context
+> **Snapshots** — to use the latest unreleased build, add the Sonatype snapshots repository:
+> ```kotlin
+> maven("https://s01.oss.sonatype.org/content/repositories/snapshots/")
+> ```
+> Then use version `1.1.0-SNAPSHOT`.
 
-Use the `koogCompose` DSL to define your AI's provider, rules, and tools.
+---
+
+## Quick start
+
+### 1. Define your context
 
 ```kotlin
 val context = koogCompose {
-    // 1. Choose your LLM
+    // Choose your LLM provider
     provider {
-        anthropic(apiKey = "your-key") { model = "claude-3-5-sonnet" }
+        anthropic(apiKey = "your-key") {
+            model = "claude-3-5-sonnet"
+        }
     }
 
-    // 2. Define conversation phases
+    // Build a phase-aware conversation graph
     phases {
         phase("greeting") {
             instructions { "Greet the user and offer to check their location." }
@@ -39,25 +75,22 @@ val context = koogCompose {
         }
 
         phase("location_check") {
-            instructions { "You now have access to the user's GPS." }
-            tool(GetCurrentLocationTool(androidContext)) // From :device module
+            instructions { "You now have access to the user's GPS coordinates." }
+            tool(GetCurrentLocationTool(androidContext)) // :device module
         }
     }
 }
 ```
 
-### 3. Integrate with Compose UI
-
-`koog-compose-ui` provides high-level state holders and Material 3 components.
+### 2. Add the Compose UI
 
 ```kotlin
 @Composable
-fun MyChatScreen() {
-    // Create stable chat state
+fun ChatScreen() {
     val chatState = rememberChatState(context)
-
-    // Wire automatic confirmation (SAFE/SENSITIVE/CRITICAL logic)
     val snackbarHostState = remember { SnackbarHostState() }
+
+    // Handles SAFE/SENSITIVE/CRITICAL confirmation tiers automatically
     ConfirmationObserver(
         chatState = chatState,
         handler = rememberAutoConfirmationHandler(snackbarHostState)
@@ -72,40 +105,117 @@ fun MyChatScreen() {
 }
 ```
 
-## 🚀 Recent v1 Milestone Updates
+### 3. Add persistent memory (optional)
 
-- **Phases & Conversation Graphs**: The conversation is now a state machine. The LLM can self-transition between "Phases" using auto-generated transition tools.
-- **5-Star Security & UX**: Added an `AutoConfirmationHandler` that automatically selects the right UI friction (Snackbar vs. Dialog).
-- **Plug-and-Play Persistence**: Refactored Room storage into an "Autonomous Battery" mode. Plug your own DAO into the session.
-- **Enhanced Tracing & Telemetry**: Added a native `KoogEventBus` with support for `TracingSink`s.
+```kotlin
+// Plug your own Room DAO — koog-compose handles the session lifecycle
+val context = koogCompose {
+    provider { /* ... */ }
+    session {
+        store(RoomSessionStore(db.sessionDao()))
+    }
+}
+```
 
-## 📦 Module Guide
+---
 
-### `koog-compose-core`
-The "Brain". Owns the `KoogComposeContext`, Phase-aware `ChatSession`, and the Koog graph bridge.
+## Core concepts
 
-### `koog-compose-ui`
-The "Face". Material 3 adapters, slots for custom media/voice, and the `KoogChatTheme`.
+### Phases
 
-### `koog-compose-device`
-The "Body". Android-specific tools (Location, soon: Screenshots, Intents).
+A `Phase` is a named state in your conversation graph. Each phase carries its own system instructions and tool access. The LLM transitions between phases automatically using generated transition tools — no manual routing code required.
 
-### `koog-compose-session-room`
-The "Memory". A pluggable KMP battery for persistent AI memory using Room.
+```
+greeting ──[user asks for location]──► location_check ──[done]──► summary
+```
 
-## 🛠 Build & Test
+### Security tiers
 
-Core logic (commonMain):
-```shell
+Every tool action is assigned a risk tier. `AutoConfirmationHandler` maps tiers to the right UI friction:
+
+| Tier | UI treatment | Example |
+|---|---|---|
+| `SAFE` | Silent / Snackbar | Reading calendar events |
+| `SENSITIVE` | Bottom sheet confirmation | Sending a message |
+| `CRITICAL` | Full-screen dialog | Deleting data, making a purchase |
+
+### Session store
+
+Implement `SessionStore` to plug in any persistence backend:
+
+```kotlin
+interface SessionStore {
+    suspend fun save(session: ChatSession)
+    suspend fun load(sessionId: String): ChatSession?
+    suspend fun delete(sessionId: String)
+}
+```
+
+The `:session-room` module provides a ready-made Room implementation.
+
+---
+
+## Platform support
+
+| Feature | Android | iOS | Desktop (JVM) |
+|---|---|---|---|
+| Core DSL & phases | ✅ | ✅ | ✅ |
+| Compose UI | ✅ | ✅ | ✅ |
+| Room session store | ✅ | ✅ | — |
+| Device tools (location) | ✅ | 🔜 v1.1 | — |
+| WorkManager proactive agents | ✅ | — | — |
+
+---
+
+## Build & test
+
+```bash
+# Run common (KMP) tests
 ./gradlew :koog-compose-core:desktopTest
-```
 
-Android verification:
-```shell
+# Run Android instrumented tests
+./gradlew :koog-compose-core:connectedAndroidTest
+
+# Build the sample app
 ./gradlew :sample-app:assembleDebug
+
+# Generate KDoc
+./gradlew dokkaHtml
 ```
 
-## 🎯 What's Next
-- **Richer Android Hooks**: ActivityResult, WorkManager, and Screenshot context.
-- **iOS Parity**: Bringing the Device module tools to iOS (CLLocation, PHPicker).
-- **Backend Sinks**: Tracing exporters for Firebase and remote telemetry.
+---
+
+## Roadmap
+
+### v1.1
+- **iOS device parity** — `CLLocation` and `PHPicker` tool support
+- **ActivityResult integration** — camera, file picker, permissions as agent tools
+- **WorkManager proactive agents** — background context gathering
+
+### v1.2
+- **Backend telemetry sinks** — Firebase, remote tracing exporters
+- **Screenshot context tool** — give the agent a view of the current screen
+- **Voice slot** — LiveKit-compatible audio input/output in the UI module
+
+---
+
+## Contributing
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
+
+- Bug reports and feature requests → [GitHub Issues](https://github.com/YOUR_USERNAME/koog-compose/issues)
+- Questions → [GitHub Discussions](https://github.com/YOUR_USERNAME/koog-compose/discussions)
+
+---
+
+## License
+
+```
+Copyright 2025 Brian Mwangi
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    https://www.apache.org/licenses/LICENSE-2.0
+```

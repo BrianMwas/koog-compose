@@ -201,6 +201,44 @@ fun AttachmentChip(
 
 // ─── Main composable ──────────────────────────────────────────────────────────
 
+/**
+ * Renders a Material 3 text input bar for composing and sending messages.
+ *
+ * This composable provides:
+ * - A multi-line text field for user input
+ * - Attachment preview chips with removal capability
+ * - Send button (enabled only when text is non-empty)
+ * - Customizable leading/trailing action buttons
+ * - Automatic character count management
+ *
+ * The input text and attachments are managed via [chatState], which automatically
+ * handles sending when the user presses the send button.
+ *
+ * @param chatState The [ChatState] holding input text, attachments, and session state.
+ * @param modifier Modifier to apply to the entire input bar column.
+ * @param colors Colors for the text field, buttons, and attachment chips (default: Material3).
+ * @param dimensions Padding, icon sizes, and line limits for the input field.
+ * @param placeholder Placeholder text shown when the input field is empty (default: "Message").
+ * @param enabled If false, the entire input bar is disabled and grayed out.
+ * @param inputShape Shape of the input field border (default: LocalChatShapes.current.inputField).
+ * @param leadingActions Optional composable lambda for custom buttons left of the text field.
+ * @param trailingActions Optional composable lambda for custom buttons right of the send button.
+ * @param attachmentPreview Optional custom composable to render the attachment preview.
+ *        If null, uses [DefaultAttachmentPreview] with chips and remove buttons.
+ *
+ * Example:
+ * ```kotlin
+ * ChatInputBar(
+ *     chatState = chatState,
+ *     modifier = Modifier.fillMaxWidth(),
+ *     leadingActions = {
+ *         IconButton(onClick = { /* open attachment */ }) {
+ *             Icon(Icons.Default.AttachFile, contentDescription = "Attach")
+ *         }
+ *     }
+ * )
+ * ```
+ */
 @Composable
 fun ChatInputBar(
     chatState: ChatState,
