@@ -1,0 +1,82 @@
+name: Manual Version Bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Which part to bump?'
+        required: true
+        type: choice
+        options:
+          - patch     # 1.0.0 → 1.0.1
+          - minor     # 1.0.x → 1.1.0
+          - major     # 1.x.x → 2.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    name: Bump ${{ inputs.bump_type }} version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Create GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.BUMP_BOT_APP_ID }}
+          private-key: ${{ secrets.BUMP_BOT_PRIVATE_KEY }}
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Read current version
+        id: current
+        run: |
+          echo "major=$(grep '^VERSION_MAJOR=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "minor=$(grep '^VERSION_MINOR=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "patch=$(grep '^VERSION_PATCH=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "build=$(grep '^VERSION_BUILD=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+
+      - name: Calculate next version
+        id: next
+        run: |
+          MAJOR=${{ steps.current.outputs.major }}
+          MINOR=${{ steps.current.outputs.minor }}
+          PATCH=${{ steps.current.outputs.patch }}
+          BUILD=$(( ${{ steps.current.outputs.build }} + 1 ))
+
+          case "${{ inputs.bump_type }}" in
+            major) MAJOR=$(( MAJOR + 1 )); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$(( MINOR + 1 )); PATCH=0 ;;
+            patch) PATCH=$(( PATCH + 1 )) ;;
+          esac
+
+          echo "major=$MAJOR"   >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR"   >> "$GITHUB_OUTPUT"
+          echo "patch=$PATCH"   >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD"   >> "$GITHUB_OUTPUT"
+          echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
+
+      - name: Write to gradle.properties
+        run: |
+          sed -i "s/^VERSION_MAJOR=.*/VERSION_MAJOR=${{ steps.next.outputs.major }}/" gradle.properties
+          sed -i "s/^VERSION_MINOR=.*/VERSION_MINOR=${{ steps.next.outputs.minor }}/" gradle.properties
+          sed -i "s/^VERSION_PATCH=.*/VERSION_PATCH=${{ steps.next.outputs.patch }}/" gradle.properties
+          sed -i "s/^VERSION_BUILD=.*/VERSION_BUILD=${{ steps.next.outputs.build }}/" gradle.properties
+          sed -i "s/^VERSION_NAME=.*/VERSION_NAME=${{ steps.next.outputs.version }}/" gradle.properties
+
+      - name: Commit, tag, and push
+        run: |
+          git config user.name  "koog-compose-bot[bot]"
+          git config user.email "koog-compose-bot[bot]@users.noreply.github.com"
+          git add gradle.properties
+          git commit -m "chore: bump ${{ inputs.bump_type }} version to ${{ steps.next.outputs.version }} [build ${{ steps.next.outputs.build }}]"
+          git tag "v${{ steps.next.outputs.version }}"
+          git push origin main
+          git push origin "v${{ steps.next.outputs.version }}"
+          # ↑ Pushing the tag automatically triggers publish.yml
