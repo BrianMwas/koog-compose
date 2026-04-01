@@ -37,9 +37,14 @@ jobs:
   publish:
     needs: test
     runs-on: macos-latest
+    environment: production
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: extract_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -58,7 +63,7 @@ jobs:
             ${{ runner.os }}-gradle-
 
       - name: Publish to Sonatype
-        run: ./gradlew publishAllPublicationsToSonatypeRepository --no-configuration-cache
+        run: ./gradlew publishAllPublicationsToSonatypeRepository --no-configuration-cache -PVERSION_NAME=${{ steps.extract_version.outputs.VERSION }}
         env:
           SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
           SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
