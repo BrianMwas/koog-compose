@@ -120,6 +120,17 @@ public data class LLMParamsConfig(
     val stopSequences: List<String> = emptyList()
 )
 
+public data class StuckDetectionConfig(
+    val threshold: Int = 3,
+    val fallbackMessage: String = "I'm having trouble with that. Please try again."
+)
+
+public class StuckDetectionConfigBuilder {
+    public var threshold: Int = 3
+    public var fallbackMessage: String = "I'm having trouble with that. Please try again."
+    public fun build(): StuckDetectionConfig = StuckDetectionConfig(threshold, fallbackMessage)
+}
+
 
 /**
  * KoogConfig — runtime configuration for a [KoogComposeContext].
@@ -135,7 +146,8 @@ public data class KoogConfig(
     val responseCache: Boolean = false,
     val structureFixingRetries: Int = 3,
     val maxAgentIterations: Int = 15,
-    val guardrails: Guardrails = Guardrails.Default
+    val guardrails: Guardrails = Guardrails.Default,
+    val stuckDetection: StuckDetectionConfig? = null
 ) {
 
 
@@ -146,7 +158,7 @@ public data class KoogConfig(
         public var requireConfirmationForSensitive: Boolean = true
         public var responseCache: Boolean = false
         public var structureFixingRetries: Int = 3
-
+        private var stuckDetection: StuckDetectionConfig? = null
         public var maxAgentIterations: Int = 10
         
         private var historyCompression: HistoryCompressionConfig? = null
@@ -170,6 +182,13 @@ public data class KoogConfig(
             guardrails = Guardrails.Builder().apply(block).build()
         }
 
+
+
+        public fun stuckDetection(block: StuckDetectionConfigBuilder.() -> Unit) {
+            stuckDetection = StuckDetectionConfigBuilder().apply(block).build()
+        }
+
+
         public fun build(): KoogConfig = KoogConfig(
             streamingEnabled = streamingEnabled,
             rateLimitPerMinute = rateLimitPerMinute,
@@ -181,7 +200,8 @@ public data class KoogConfig(
             structureFixingRetries = structureFixingRetries,
             responseCache = responseCache,
             maxAgentIterations = maxAgentIterations,
-            guardrails = guardrails
+            guardrails = guardrails,
+            stuckDetection = stuckDetection
         )
     }
 

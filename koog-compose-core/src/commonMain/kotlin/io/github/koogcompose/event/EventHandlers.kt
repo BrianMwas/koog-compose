@@ -57,6 +57,10 @@ public class EventHandlers private constructor(
             onTyped(handler)
         }
 
+        public fun onAgentStuck(handler: suspend (KoogEvent.AgentStuck) -> Unit): Unit {
+            onTyped(handler)
+        }
+
         public fun onProviderChunkReceived(handler: suspend (KoogEvent.ProviderChunkReceived) -> Unit): Unit {
             onTyped(handler)
         }
