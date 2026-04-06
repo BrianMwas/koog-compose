@@ -29,6 +29,7 @@ Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges 
 io.github.brianmwas.koog_compose:koog-compose-core          ← DSL, agent runtime, phase engine   (required)
 io.github.brianmwas.koog_compose:koog-compose-ui            ← Material 3 Compose components       (optional)
 io.github.brianmwas.koog_compose:koog-compose-device        ← Android/iOS device tools            (optional)
+io.github.brianmwas.koog_compose:koog-compose-testing       ← Deterministic fake executor + test DSL
 io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed persistent memory       (optional)
 ```
 
@@ -256,6 +257,54 @@ interface SessionStore {
 ```
 
 The `:session-room` module provides a ready-made Room implementation.
+
+### Testing
+
+`koog-compose-testing` gives you a deterministic harness for chat and phase flows.
+It keeps the real `ChatSession` tool/phase loop, but swaps the live provider for a scripted
+`FakePromptExecutor`, so you can prove transitions, tool calls, confirmation behavior, and
+shared-state mutation in unit tests without hitting a real model.
+
+```kotlin
+val session = testPhaseSession(context) {
+    on("I need help with my location", phase = "greeting") {
+        transitionTo("location_check")
+        callTool("RecordLocationIntent")
+        respondWith("Sure, fetching location now.")
+    }
+}
+
+session.send("I need help with my location")
+
+assertPhase(session, "location_check")
+assertToolCalled(session, "RecordLocationIntent")
+assertState(session) { state ->
+    assertEquals(Intent.LOCATION_REQUEST, state.intent)
+}
+```
+
+Use the simple form when a turn only needs text:
+
+```kotlin
+val session = testPhaseSession(context) {
+    on("Hello") respondWith "Hi there."
+}
+```
+
+You can also make confirmation behavior deterministic:
+
+```kotlin
+val session = testPhaseSession(
+    context = context,
+    confirmationHandler = AutoDenyConfirmationHandler,
+) {
+    on("Share my location", phase = "greeting") {
+        transitionTo("location_check")
+        callTool("RecordLocationIntent")
+        respondWith("I could not access location.")
+    }
+}
+```
 
 ### Stateless sessions
 
