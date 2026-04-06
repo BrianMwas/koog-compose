@@ -4,6 +4,9 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.model.PromptExecutor
 import io.github.koogcompose.phase.PhaseAwareAgent
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,10 +57,13 @@ public class PhaseSession<S>(
     public val currentPhase: StateFlow<String> = _currentPhase.asStateFlow()
 
     private val _isRunning = MutableStateFlow(false)
-    public val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
+    public var isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
 
     private val _lastResponse = MutableStateFlow<String?>(null)
     public val lastResponse: StateFlow<String?> = _lastResponse.asStateFlow()
+
+    private val _turnId = MutableStateFlow(0)
+    public val turnId: StateFlow<Int> = _turnId.asStateFlow()
 
     private val _error = MutableStateFlow<Throwable?>(null)
     public val error: StateFlow<Throwable?> = _error.asStateFlow()
@@ -72,6 +78,10 @@ public class PhaseSession<S>(
     private var agent: AIAgent<String, String>? = null
     private var sessionInitialised = false
 
+    // Add alongside your existing state flows
+    private val _responseStream = MutableSharedFlow<String>(extraBufferCapacity = 64)
+    public val responseStream: Flow<String> = _responseStream.asSharedFlow()
+
     // ── Public API ─────────────────────────────────────────────────────────
 
     /**
@@ -82,6 +92,9 @@ public class PhaseSession<S>(
         scope.launch {
             _isRunning.value = true
             _error.value = null
+            _turnId.value += 1
+
+
             try {
                 ensureInitialised()
                 val result = requireNotNull(agent) { "Agent failed to initialise." }
@@ -124,11 +137,11 @@ public class PhaseSession<S>(
 
     // ── Initialisation ─────────────────────────────────────────────────────
 
+    // Replace ensureInitialised()
     private suspend fun ensureInitialised() {
         if (sessionInitialised) return
 
         val savedSession = store.load(sessionId)
-
         val activeContext = if (savedSession != null) {
             _currentPhase.value = savedSession.currentPhaseName
             context.withPhase(savedSession.currentPhaseName)
@@ -136,7 +149,8 @@ public class PhaseSession<S>(
             context
         }
 
-        agent = PhaseAwareAgent.create(activeContext, executor, strategyName)
+        val tappingExecutor = StreamTappingExecutor(executor, _responseStream)
+        agent = PhaseAwareAgent.create(activeContext, tappingExecutor, strategyName)
         sessionInitialised = true
     }
 
