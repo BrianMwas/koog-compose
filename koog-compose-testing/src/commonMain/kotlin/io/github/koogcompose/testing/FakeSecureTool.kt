@@ -5,7 +5,7 @@ import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolResult
 import kotlinx.serialization.json.JsonObject
 
-class FakeSecureTool(
+public class FakeSecureTool(
     override val name: String = "fake_tool",
     override val description: String = "Testing tool",
     override val permissionLevel: PermissionLevel = PermissionLevel.SAFE,

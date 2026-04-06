@@ -245,7 +245,7 @@ class ChatSessionToolLoopTest {
     }
 }
 
-private fun toolContext(tool: SecureTool): KoogComposeContext = koogCompose {
+private fun toolContext(tool: SecureTool): KoogComposeContext<Unit> = koogCompose {
     provider {
         ollama(model = "demo-local")
     }
@@ -260,7 +260,7 @@ private fun toolContext(tool: SecureTool): KoogComposeContext = koogCompose {
     }
 }
 
-private fun phaseContext(checkoutTool: SecureTool): KoogComposeContext = koogCompose {
+private fun phaseContext(checkoutTool: SecureTool): KoogComposeContext<Unit> = koogCompose {
     provider {
         ollama(model = "demo-local")
     }
@@ -306,12 +306,12 @@ private class DemoCriticalTool : SecureTool {
 
 private class RecordingAIProvider(
     private val steps: List<List<AIResponseChunk>>,
-    private val onStreamStart: (KoogComposeContext, String) -> Unit = { _, _ -> }
+    private val onStreamStart: (KoogComposeContext<*>, String) -> Unit = { _, _ -> }
 ) : AIProvider {
     private var index: Int = 0
 
-    override fun stream(
-        context: KoogComposeContext,
+    override fun <S> stream(
+        context: KoogComposeContext<S>,
         history: List<ChatMessage>,
         systemPrompt: String,
         attachments: List<Attachment>

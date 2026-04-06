@@ -14,7 +14,7 @@ import kotlinx.serialization.json.JsonObject
  *
  * This is the single bridge between koog-compose's tool model and Koog internals.
  */
-fun SecureTool.toKoogTool(): Tool<JsonObject, String> =
+internal fun SecureTool.toKoogTool(): Tool<JsonObject, String> =
     SecureToolAdapter(this)
 
 @OptIn(InternalKoogSerializationApi::class)

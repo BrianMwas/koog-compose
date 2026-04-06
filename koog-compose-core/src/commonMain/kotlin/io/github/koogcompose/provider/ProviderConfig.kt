@@ -136,43 +136,46 @@ public class AnthropicBuilder(private val apiKey: String) {
     public fun build(): ProviderConfig = ProviderConfig.Anthropic(apiKey, model, maxTokens, temperature)
 }
 
-class OpenAIBuilder(private val apiKey: String) {
-    var model: String = "gpt-4o"
-    var baseUrl: String = "https://api.openai.com/v1"
-    var maxTokens: Int? = null
-    var temperature: Double? = null
-    fun build() = ProviderConfig.OpenAI(apiKey, model, baseUrl, maxTokens, temperature)
+public class OpenAIBuilder(private val apiKey: String) {
+    public var model: String = "gpt-4o"
+    public var baseUrl: String = "https://api.openai.com/v1"
+    public var maxTokens: Int? = null
+    public var temperature: Double? = null
+    public fun build(): ProviderConfig = ProviderConfig.OpenAI(apiKey, model, baseUrl, maxTokens, temperature)
 }
 
-class GoogleBuilder(private val apiKey: String) {
-    var model: String = "gemini-2.0-flash"
-    var maxTokens: Int? = null
-    var temperature: Double? = null
-    fun build() = ProviderConfig.Google(apiKey, model, maxTokens, temperature)
+public class GoogleBuilder(private val apiKey: String) {
+    public var model: String = "gemini-2.0-flash"
+    public var maxTokens: Int? = null
+    public var temperature: Double? = null
+    public fun build(): ProviderConfig = ProviderConfig.Google(apiKey, model, maxTokens, temperature)
 }
 
-class OllamaBuilder(private val model: String) {
-    var baseUrl: String = "http://localhost:11434"
-    var maxTokens: Int? = null
-    var temperature: Double? = null
-    fun build() = ProviderConfig.Ollama(model, baseUrl, maxTokens, temperature)
+public class OllamaBuilder(private val model: String) {
+    public var baseUrl: String = "http://localhost:11434"
+    public var maxTokens: Int? = null
+    public var temperature: Double? = null
+    public fun build(): ProviderConfig = ProviderConfig.Ollama(model, baseUrl, maxTokens, temperature)
 }
 
-class RouterBuilder(private val strategy: RouterStrategy) {
+public class RouterBuilder(private val strategy: RouterStrategy) {
     private val providers = mutableListOf<ProviderConfig>()
 
-    fun anthropic(apiKey: String, block: AnthropicBuilder.() -> Unit = {}) {
+    public fun anthropic(apiKey: String, block: AnthropicBuilder.() -> Unit = {}): Unit {
         providers.add(AnthropicBuilder(apiKey).apply(block).build())
     }
-    fun openAI(apiKey: String, block: OpenAIBuilder.() -> Unit = {}) {
+
+    public fun openAI(apiKey: String, block: OpenAIBuilder.() -> Unit = {}): Unit {
         providers.add(OpenAIBuilder(apiKey).apply(block).build())
     }
-    fun google(apiKey: String, block: GoogleBuilder.() -> Unit = {}) {
+
+    public fun google(apiKey: String, block: GoogleBuilder.() -> Unit = {}): Unit {
         providers.add(GoogleBuilder(apiKey).apply(block).build())
     }
-    fun ollama(model: String, block: OllamaBuilder.() -> Unit = {}) {
+
+    public fun ollama(model: String, block: OllamaBuilder.() -> Unit = {}): Unit {
         providers.add(OllamaBuilder(model).apply(block).build())
     }
 
-    fun build() = ProviderConfig.Router(providers.toList(), strategy)
+    public fun build(): ProviderConfig = ProviderConfig.Router(providers.toList(), strategy)
 }

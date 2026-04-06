@@ -40,9 +40,11 @@ public object PhaseAwareAgent {
             phaseRegistry = context.phaseRegistry.resolveToolRefs(context.toolRegistry)
         )
 
-        val provider = resolvedContext.provider
-            ?: error("koog-compose: PhaseAwareAgent requires a KoogAIProvider. " +
-                    "Make sure you called provider { } in your koogCompose { } block.")
+        val provider = resolvedContext.provider as? KoogAIProvider<*>
+            ?: error(
+                "koog-compose: PhaseAwareAgent requires a KoogAIProvider. " +
+                    "Make sure you called provider { } in your koogCompose { } block."
+            )
 
         val llmModel = provider.resolveModelForConfig()
 

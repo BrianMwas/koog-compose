@@ -15,9 +15,6 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
-    iosArm64()
-    iosSimulatorArm64()
-    iosX64()
 
     sourceSets {
         commonMain.dependencies {
@@ -34,11 +31,8 @@ room {
 }
 
 dependencies {
-    // KSP for all targets
+    // KSP for Android Room generation
     add("kspAndroid", libs.androidx.room.compiler)
-    add("kspIosArm64", libs.androidx.room.compiler)
-    add("kspIosSimulatorArm64", libs.androidx.room.compiler)
-    add("kspIosX64", libs.androidx.room.compiler)
 }
 
 android {

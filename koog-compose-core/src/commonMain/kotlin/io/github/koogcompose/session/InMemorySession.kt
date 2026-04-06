@@ -2,7 +2,6 @@ package io.github.koogcompose.session
 
 import kotlin.time.Clock
 
-
 /**
  * Default in-memory [SessionStore]. No setup required.
  *
@@ -11,8 +10,9 @@ import kotlin.time.Clock
  *  - Single-session UIs where history loss on app restart is acceptable
  *  - Short-lived assistant flows (e.g. a checkout wizard)
  *
- * For persistence across app restarts, use [RoomSessionStore] (koog-compose-device).
- * For multi-device sync, use [RedisSessionStore] (koog-compose-device).
+ * For persistence across app restarts, use
+ * [io.github.koogcompose.session.room.RoomSessionStore] from `koog-compose-session-room`.
+ * For multi-device sync, provide a custom [SessionStore] implementation.
  *
  * Usage (this is the default — you don't need to specify it):
  * ```kotlin
@@ -24,18 +24,18 @@ import kotlin.time.Clock
  * )
  * ```
  */
-class InMemorySessionStore : SessionStore {
+public class InMemorySessionStore : SessionStore {
 
-    private val store = ConcurrentHashMap<String, AgentSession>()
+    private val store: MutableMap<String, AgentSession> = mutableMapOf()
 
     override suspend fun load(sessionId: String): AgentSession? =
         store[sessionId]
 
-    override suspend fun save(sessionId: String, session: AgentSession) {
-        store[sessionId] = session.copy(updatedAt = Clock.System.currentTimeMillis())
+    override suspend fun save(sessionId: String, session: AgentSession): Unit {
+        store[sessionId] = session.copy(updatedAt = Clock.System.now().toEpochMilliseconds())
     }
 
-    override suspend fun delete(sessionId: String) {
+    override suspend fun delete(sessionId: String): Unit {
         store.remove(sessionId)
     }
 
@@ -43,8 +43,9 @@ class InMemorySessionStore : SessionStore {
         store.containsKey(sessionId)
 
     /** Returns the number of sessions currently held in memory. */
-    val size: Int get() = store.size
+    public val size: Int
+        get() = store.size
 
     /** Clears all sessions. Useful in tests. */
-    fun clear() = store.clear()
+    public fun clear(): Unit = store.clear()
 }

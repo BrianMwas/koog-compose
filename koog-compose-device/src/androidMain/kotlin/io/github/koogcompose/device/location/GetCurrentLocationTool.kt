@@ -18,7 +18,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlin.coroutines.resume
 
-class GetCurrentLocationTool(
+public class GetCurrentLocationTool(
     context: Context
 ) : SecureTool {
     private val appContext = context.applicationContext

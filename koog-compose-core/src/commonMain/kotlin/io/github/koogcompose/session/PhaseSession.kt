@@ -10,11 +10,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
-
-
-
-
-
 /**
  * Compose/ViewModel-friendly runtime for a phase-aware agent.
  *
@@ -83,7 +78,7 @@ public class PhaseSession<S>(
      * Sends [userMessage] to the agent.
      * Initialises or resumes from [store] on the first call.
      */
-    public fun send(userMessage: String) {
+    public fun send(userMessage: String): Unit {
         scope.launch {
             _isRunning.value = true
             _error.value = null
@@ -105,7 +100,7 @@ public class PhaseSession<S>(
      * Clears persisted session and resets all in-memory state.
      * The next [send] starts fresh from the initial phase.
      */
-    public fun reset() {
+    public fun reset(): Unit {
         scope.launch {
             store.delete(sessionId)
             agent = null
@@ -120,7 +115,7 @@ public class PhaseSession<S>(
      * Forces a phase transition without an LLM turn.
      * Useful for host-app overrides (e.g. a Cancel button).
      */
-    public fun forceTransitionTo(phaseName: String) {
+    public fun forceTransitionTo(phaseName: String): Unit {
         requireNotNull(context.phaseRegistry.resolve(phaseName)) {
             "koog-compose: Phase '$phaseName' not found in registry."
         }

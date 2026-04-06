@@ -2,10 +2,10 @@ package io.github.koogcompose.security
 
 import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.tool.ToolResult
-import kotlinx.datetime.Clock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlin.time.Clock
 
 /**
  * Hard enforcement of [Guardrails] at runtime.
@@ -22,7 +22,7 @@ internal class GuardrailEnforcer(
     private var activeJobCount = 0
 
     // In GuardrailEnforcer
-    var onConfirmationRequired: suspend (toolName: String, message: String, level: PermissionLevel) -> Boolean =
+    internal var onConfirmationRequired: suspend (toolName: String, message: String, level: PermissionLevel) -> Boolean =
         { _, _, _ -> true } // default: auto-approve, override in ViewModel
 
     suspend fun requestConfirmation(
@@ -87,8 +87,8 @@ internal class GuardrailEnforcer(
     }
 
     /** Call this when a background job starts to track [maxScheduledJobs] */
-    fun notifyJobStarted() { activeJobCount++ }
+    internal fun notifyJobStarted() { activeJobCount++ }
     
     /** Call this when a background job finishes */
-    fun notifyJobFinished() { if (activeJobCount > 0) activeJobCount-- }
+    internal fun notifyJobFinished() { if (activeJobCount > 0) activeJobCount-- }
 }

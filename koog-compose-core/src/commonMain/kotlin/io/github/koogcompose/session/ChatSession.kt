@@ -1,5 +1,7 @@
 package io.github.koogcompose.session
 
+import io.github.koogcompose.event.KoogEvent
+import io.github.koogcompose.provider.AIProvider
 import io.github.koogcompose.security.AuditLogger
 import io.github.koogcompose.security.PermissionCheckResult
 import io.github.koogcompose.security.PermissionManager
@@ -8,13 +10,13 @@ import io.github.koogcompose.tool.ToolResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
@@ -91,7 +93,7 @@ public data class ChatMessage(
     val toolName: String? = null,
     val toolCallId: String? = null,
     val toolKind: ToolMessageKind? = null,
-    val timestampMs: Long
+    val timestampMs: Long,
 )
 
 /**
@@ -104,7 +106,7 @@ public sealed class AIResponseChunk {
     public data class ToolCallRequest(
         val toolCallId: String?,
         val toolName: String,
-        val args: JsonObject
+        val args: JsonObject,
     ) : AIResponseChunk()
 
     public object End : AIResponseChunk()
@@ -112,7 +114,7 @@ public sealed class AIResponseChunk {
 }
 
 /**
- * The state of a [ChatSession].
+ * The observable state of a [ChatSession].
  */
 public data class ChatSessionState(
     val messages: List<ChatMessage> = emptyList(),
@@ -124,89 +126,110 @@ public data class ChatSessionState(
 )
 
 /**
- * Interface for AI providers that support streaming responses.
+ * Manages a single chat conversation and the tool/phase loop around it.
  */
-public interface AIProvider {
-    public fun stream(
-        context: KoogComposeContext,
-        history: List<ChatMessage>,
-        systemPrompt: String,
-        attachments: List<Attachment> = emptyList()
-    ): Flow<AIResponseChunk>
-}
-
-/**
- * Manages a single chat conversation.
- */
-public class ChatSession internal constructor(
-    public val initialContext: KoogComposeContext,
+public class ChatSession(
+    public val initialContext: KoogComposeContext<*>,
     private val provider: AIProvider,
     private val scope: CoroutineScope,
     private val userId: String? = null,
-    private val idGenerator: () -> String = { randomId() }
+    private val idGenerator: () -> String = { randomId() },
 ) {
-    private val _currentContext = MutableStateFlow(initialContext)
-    public val currentContext: StateFlow<KoogComposeContext> = _currentContext.asStateFlow()
+    private val startingContext: KoogComposeContext<*> =
+        initialContext.activePhaseName
+            ?.let(initialContext::withPhase)
+            ?: initialContext.phaseRegistry.initialPhase
+                ?.name
+                ?.let(initialContext::withPhase)
+            ?: initialContext
+
+    private val _currentContext = MutableStateFlow(startingContext)
+    public val currentContext: StateFlow<KoogComposeContext<*>> = _currentContext.asStateFlow()
+    public val context: KoogComposeContext<*>
+        get() = _currentContext.value
 
     private val _state = MutableStateFlow(
-        ChatSessionState(activePhaseName = initialContext.activePhaseName)
+        ChatSessionState(activePhaseName = startingContext.activePhaseName)
     )
     public val state: StateFlow<ChatSessionState> = _state.asStateFlow()
 
     private val _chunks = MutableSharedFlow<AIResponseChunk>(extraBufferCapacity = 256)
     public val chunks: SharedFlow<AIResponseChunk> = _chunks.asSharedFlow()
 
+    private val _events = MutableSharedFlow<KoogEvent>(extraBufferCapacity = 128)
+    public val events: SharedFlow<KoogEvent> = _events.asSharedFlow()
+
     public val auditLogger: AuditLogger = AuditLogger()
     public val permissionManager: PermissionManager = PermissionManager(
         auditLogger = auditLogger,
-        requireConfirmationForSensitive = initialContext.config.requireConfirmationForSensitive,
-        userId = userId
+        requireConfirmationForSensitive = startingContext.config.requireConfirmationForSensitive,
+        userId = userId,
     )
 
     private var activeJob: Job? = null
-    private val rateLimiter = RateLimiter(initialContext.config.rateLimitPerMinute)
+    private val rateLimiter = RateLimiter(startingContext.config.rateLimitPerMinute)
 
-    public fun send(text: String, attachments: List<Attachment> = emptyList()) {
-        if (text.isBlank() && attachments.isEmpty()) return
+    public fun send(text: String, attachments: List<Attachment> = emptyList()): Unit {
+        if (text.isBlank() && attachments.isEmpty()) {
+            return
+        }
+
         cancel()
         activeJob = scope.launch {
             if (!rateLimiter.tryAcquire()) {
-                _state.update { it.copy(isRateLimited = true) }
+                _state.update { current ->
+                    current.copy(isRateLimited = true)
+                }
+                emitEvent(
+                    KoogEvent.RateLimited(
+                        timestampMs = currentTimeMs(),
+                        phaseName = _currentContext.value.activePhaseName,
+                    )
+                )
                 return@launch
             }
-            _state.update { it.copy(isRateLimited = false) }
+
+            _state.update { current ->
+                current.copy(isRateLimited = false)
+            }
             processTurn(text, attachments)
         }
     }
 
-    public fun cancel() {
+    public fun cancel(): Unit {
         activeJob?.cancel()
         activeJob = null
         permissionManager.clearPending()
-        _state.update { it.copy(isStreaming = false, streamingContent = "") }
+        _state.update { current ->
+            current.copy(isStreaming = false, streamingContent = "")
+        }
     }
 
-    public fun regenerate() {
+    public fun regenerate(): Unit {
         val messages = _state.value.messages
-        val lastUserIndex = messages.indexOfLast { it.role == MessageRole.USER }
-        if (lastUserIndex == -1) return
+        val lastUserIndex = messages.indexOfLast { message -> message.role == MessageRole.USER }
+        if (lastUserIndex == -1) {
+            return
+        }
 
         val lastUser = messages[lastUserIndex]
-        _state.update {
-            it.copy(
+        _state.update { current ->
+            current.copy(
                 messages = messages.take(lastUserIndex),
                 isStreaming = false,
                 streamingContent = "",
                 error = null,
-                activePhaseName = _currentContext.value.activePhaseName
+                activePhaseName = _currentContext.value.activePhaseName,
             )
         }
         send(lastUser.content, lastUser.attachments)
     }
 
-    public fun clearHistory() {
+    public fun clearHistory(): Unit {
         cancel()
-        _state.update { ChatSessionState(activePhaseName = _currentContext.value.activePhaseName) }
+        _state.update {
+            ChatSessionState(activePhaseName = _currentContext.value.activePhaseName)
+        }
     }
 
     public suspend fun confirmPendingToolExecution(): ToolResult =
@@ -215,24 +238,31 @@ public class ChatSession internal constructor(
     public suspend fun denyPendingToolExecution(): ToolResult =
         permissionManager.onUserDenied()
 
-    public fun withContext(additionalContext: String): ChatSession {
-        return ChatSession(
+    public fun withContext(additionalContext: String): ChatSession =
+        ChatSession(
             initialContext = _currentContext.value.withSessionContext(additionalContext),
             provider = provider,
             scope = scope,
             userId = userId,
-            idGenerator = idGenerator
-        ).also { it._state.value = _state.value }
+            idGenerator = idGenerator,
+        ).also { session ->
+            session._state.value = _state.value
+        }
+
+    public fun close(): Unit {
+        activeJob?.cancel()
+        activeJob = null
+        permissionManager.clearPending()
     }
 
-    private suspend fun processTurn(text: String, attachments: List<Attachment>) {
+    private suspend fun processTurn(text: String, attachments: List<Attachment>): Unit {
         val userMessage = ChatMessage(
             id = idGenerator(),
             role = MessageRole.USER,
             content = text,
             state = MessageState.COMPLETE,
             attachments = attachments,
-            timestampMs = currentTimeMs()
+            timestampMs = currentTimeMs(),
         )
         val assistantMessageId = idGenerator()
         val assistantMessage = ChatMessage(
@@ -240,100 +270,185 @@ public class ChatSession internal constructor(
             role = MessageRole.ASSISTANT,
             content = "",
             state = MessageState.STREAMING,
-            timestampMs = currentTimeMs()
+            timestampMs = currentTimeMs(),
         )
+        val turnId = assistantMessageId
 
-        _state.update {
-            it.copy(
-                messages = it.messages + userMessage + assistantMessage,
+        _state.update { current ->
+            current.copy(
+                messages = current.messages + userMessage + assistantMessage,
                 isStreaming = true,
                 streamingContent = "",
-                error = null
+                error = null,
+                activePhaseName = _currentContext.value.activePhaseName,
             )
         }
 
+        emitEvent(
+            KoogEvent.TurnStarted(
+                timestampMs = currentTimeMs(),
+                turnId = turnId,
+                phaseName = _currentContext.value.activePhaseName,
+                userMessageId = userMessage.id,
+                text = text,
+                attachmentCount = attachments.size,
+            )
+        )
+
         val assistantContent = StringBuilder()
         val toolsUsed = mutableListOf<String>()
+        var passIndex = 0
 
         try {
             while (true) {
+                passIndex += 1
                 val passBuffer = StringBuilder()
                 val requestedTools = mutableListOf<AIResponseChunk.ToolCallRequest>()
+                val phaseName = _currentContext.value.activePhaseName
 
-                provider.stream(
-                    context = _currentContext.value,
-                    history = _state.value.messages.filterNot { it.id == assistantMessageId },
-                    systemPrompt = _currentContext.value.resolveEffectiveInstructions(),
-                    attachments = emptyList()
-                ).collect { chunk ->
-                    _chunks.tryEmit(chunk)
-                    when (chunk) {
-                        is AIResponseChunk.TextDelta -> {
-                            passBuffer.append(chunk.text)
-                            updateStreamingContent(
-                                assistantMessageId,
-                                assistantContent.toString() + passBuffer
+                emitEvent(
+                    KoogEvent.ProviderPassStarted(
+                        timestampMs = currentTimeMs(),
+                        turnId = turnId,
+                        phaseName = phaseName,
+                        passIndex = passIndex,
+                        availableTools = _currentContext.value.resolveEffectiveTools().map(SecureTool::name),
+                    )
+                )
+
+                try {
+                    provider.stream(
+                        context = _currentContext.value,
+                        history = _state.value.messages.filterNot { message -> message.id == assistantMessageId },
+                        systemPrompt = _currentContext.value.resolveEffectiveInstructions(),
+                        attachments = emptyList(),
+                    ).collect { chunk ->
+                        _chunks.tryEmit(chunk)
+                        emitEvent(
+                            KoogEvent.ProviderChunkReceived(
+                                timestampMs = currentTimeMs(),
+                                turnId = turnId,
+                                phaseName = _currentContext.value.activePhaseName,
+                                passIndex = passIndex,
+                                chunk = chunk,
                             )
-                        }
+                        )
 
-                        is AIResponseChunk.TextComplete -> {
-                            passBuffer.clear()
-                            passBuffer.append(chunk.text)
-                            updateStreamingContent(
-                                assistantMessageId,
-                                assistantContent.toString() + passBuffer
-                            )
-                        }
+                        when (chunk) {
+                            is AIResponseChunk.TextDelta -> {
+                                passBuffer.append(chunk.text)
+                                updateStreamingContent(
+                                    messageId = assistantMessageId,
+                                    content = assistantContent.toString() + passBuffer,
+                                )
+                            }
 
-                        is AIResponseChunk.ToolCallRequest -> {
-                            requestedTools += chunk
-                        }
+                            is AIResponseChunk.TextComplete -> {
+                                passBuffer.clear()
+                                passBuffer.append(chunk.text)
+                                updateStreamingContent(
+                                    messageId = assistantMessageId,
+                                    content = assistantContent.toString() + passBuffer,
+                                )
+                            }
 
-                        is AIResponseChunk.Error -> {
-                            throw ProviderStreamException(chunk.message)
-                        }
+                            is AIResponseChunk.ToolCallRequest -> {
+                                requestedTools += chunk
+                            }
 
-                        is AIResponseChunk.ReasoningDelta,
-                        AIResponseChunk.End -> Unit
+                            is AIResponseChunk.Error -> {
+                                throw ProviderStreamException(chunk.message)
+                            }
+
+                            is AIResponseChunk.ReasoningDelta,
+                            AIResponseChunk.End -> Unit
+                        }
                     }
+
+                    emitEvent(
+                        KoogEvent.ProviderPassCompleted(
+                            timestampMs = currentTimeMs(),
+                            turnId = turnId,
+                            phaseName = _currentContext.value.activePhaseName,
+                            passIndex = passIndex,
+                        )
+                    )
+                } catch (error: Exception) {
+                    emitEvent(
+                        KoogEvent.ProviderPassFailed(
+                            timestampMs = currentTimeMs(),
+                            turnId = turnId,
+                            phaseName = _currentContext.value.activePhaseName,
+                            passIndex = passIndex,
+                            message = error.message ?: "Provider stream failed",
+                        )
+                    )
+                    throw error
                 }
 
                 assistantContent.append(passBuffer)
 
-                if (requestedTools.isEmpty()) break
+                if (requestedTools.isEmpty()) {
+                    break
+                }
 
-                var phaseChanged = false
                 for (request in requestedTools) {
-                    val outcome = executeToolCall(request)
+                    val outcome = executeToolCall(turnId, request)
                     if (outcome.result is ToolResult.Success) {
                         toolsUsed += request.toolName
                     }
                     if (outcome.phaseChanged) {
-                        phaseChanged = true
                         break
                     }
                 }
-                
-                if (phaseChanged) continue else break
             }
 
-            finalizeMessage(assistantMessageId, assistantContent.toString(), toolsUsed)
+            finalizeMessage(
+                messageId = assistantMessageId,
+                finalContent = assistantContent.toString(),
+                toolsUsed = toolsUsed,
+            )
+            emitEvent(
+                KoogEvent.TurnCompleted(
+                    timestampMs = currentTimeMs(),
+                    turnId = turnId,
+                    phaseName = _currentContext.value.activePhaseName,
+                    assistantMessageId = assistantMessageId,
+                    toolNames = toolsUsed.toList(),
+                )
+            )
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
-            markMessageError(assistantMessageId, error.message ?: "Stream interrupted")
+            markMessageError(
+                messageId = assistantMessageId,
+                error = error.message ?: "Stream interrupted",
+            )
+            emitEvent(
+                KoogEvent.TurnFailed(
+                    timestampMs = currentTimeMs(),
+                    turnId = turnId,
+                    phaseName = _currentContext.value.activePhaseName,
+                    message = error.message ?: "Stream interrupted",
+                )
+            )
         }
     }
 
-    private suspend fun executeToolCall(request: AIResponseChunk.ToolCallRequest): ToolExecutionOutcome {
-        if (request.toolName.startsWith("transition_to_")) {
-            val targetPhase = request.toolName.removePrefix("transition_to_")
-            if (_currentContext.value.phaseRegistry.resolve(targetPhase) != null) {
-                _currentContext.update { it.withPhase(targetPhase) }
-                _state.update { it.copy(activePhaseName = targetPhase) }
-                return ToolExecutionOutcome(ToolResult.Success("Transitioned to phase: $targetPhase"), true)
-            }
-        }
+    private suspend fun executeToolCall(
+        turnId: String,
+        request: AIResponseChunk.ToolCallRequest,
+    ): ToolExecutionOutcome {
+        emitEvent(
+            KoogEvent.ToolCallRequested(
+                timestampMs = currentTimeMs(),
+                turnId = turnId,
+                phaseName = _currentContext.value.activePhaseName,
+                toolCallId = request.toolCallId,
+                toolName = request.toolName,
+                args = request.args,
+            )
+        )
 
         appendToolMessage(
             ChatMessage(
@@ -343,57 +458,132 @@ public class ChatSession internal constructor(
                 toolName = request.toolName,
                 toolCallId = request.toolCallId,
                 toolKind = ToolMessageKind.CALL,
-                timestampMs = currentTimeMs()
+                timestampMs = currentTimeMs(),
             )
         )
 
-        val tool = _currentContext.value.resolveEffectiveTools().find { it.name == request.toolName }
-        
+        if (request.toolName.startsWith("transition_to_")) {
+            return handlePhaseTransition(turnId, request)
+        }
+
+        val tool = _currentContext.value.resolveEffectiveTools().find { candidate ->
+            candidate.name == request.toolName
+        }
+
         val result = when {
             tool == null -> {
                 auditLogger.logFailed(
                     request.toolName,
                     request.args.toString(),
                     "Tool not registered",
-                    userId
+                    userId,
                 )
                 ToolResult.Failure("Tool not registered: ${request.toolName}")
             }
 
             else -> when (val check = permissionManager.check(tool, request.args)) {
-                PermissionCheckResult.Granted ->
-                    executeToolAndAudit(tool, request.args)
+                PermissionCheckResult.Granted -> executeToolAndAudit(tool, request.args)
 
-                is PermissionCheckResult.RequiresConfirmation ->
+                is PermissionCheckResult.RequiresConfirmation -> {
+                    emitEvent(
+                        KoogEvent.ToolConfirmationRequested(
+                            timestampMs = currentTimeMs(),
+                            turnId = turnId,
+                            phaseName = _currentContext.value.activePhaseName,
+                            toolCallId = request.toolCallId,
+                            toolName = request.toolName,
+                            permissionLevel = check.permissionLevel,
+                            confirmationMessage = check.confirmationMessage,
+                        )
+                    )
                     permissionManager.requestConfirmation(tool, request.args) {
                         tool.execute(request.args)
                     }
+                }
 
                 is PermissionCheckResult.Denied -> {
                     auditLogger.logDenied(
                         request.toolName,
                         request.args.toString(),
                         check.reason,
-                        userId
+                        userId,
                     )
                     ToolResult.Denied(check.reason)
                 }
             }
         }
 
-        appendToolMessage(
-            ChatMessage(
-                id = idGenerator(),
-                role = MessageRole.TOOL,
-                content = toolResultPayload(result),
-                toolName = request.toolName,
+        appendToolResultMessage(request, result)
+        emitEvent(
+            KoogEvent.ToolExecutionCompleted(
+                timestampMs = currentTimeMs(),
+                turnId = turnId,
+                phaseName = _currentContext.value.activePhaseName,
                 toolCallId = request.toolCallId,
-                toolKind = ToolMessageKind.RESULT,
-                timestampMs = currentTimeMs()
+                toolName = request.toolName,
+                result = result,
             )
         )
+        return ToolExecutionOutcome(result = result, phaseChanged = false)
+    }
 
-        return ToolExecutionOutcome(result, false)
+    private suspend fun handlePhaseTransition(
+        turnId: String,
+        request: AIResponseChunk.ToolCallRequest,
+    ): ToolExecutionOutcome {
+        val targetPhase = request.toolName.removePrefix("transition_to_")
+        val previousPhase = _currentContext.value.activePhaseName
+        val resolvedPhase = _currentContext.value.phaseRegistry.resolve(targetPhase)
+            ?: return ToolExecutionOutcome(
+                result = ToolResult.Failure("Unknown phase: $targetPhase"),
+                phaseChanged = false,
+            ).also { outcome ->
+                appendToolResultMessage(request, outcome.result)
+                emitEvent(
+                    KoogEvent.ToolExecutionCompleted(
+                        timestampMs = currentTimeMs(),
+                        turnId = turnId,
+                        phaseName = previousPhase,
+                        toolCallId = request.toolCallId,
+                        toolName = request.toolName,
+                        result = outcome.result,
+                        isPhaseTransition = true,
+                    )
+                )
+            }
+
+        _currentContext.update { current ->
+            current.withPhase(resolvedPhase.name)
+        }
+        _state.update { current ->
+            current.copy(activePhaseName = resolvedPhase.name)
+        }
+
+        val result = ToolResult.Success("Transitioned to phase '${resolvedPhase.name}'")
+        auditLogger.logApproved(request.toolName, request.args.toString(), userId)
+        appendToolResultMessage(request, result)
+        emitEvent(
+            KoogEvent.PhaseTransitioned(
+                timestampMs = currentTimeMs(),
+                turnId = turnId,
+                phaseName = resolvedPhase.name,
+                toolCallId = request.toolCallId,
+                fromPhaseName = previousPhase,
+                toPhaseName = resolvedPhase.name,
+            )
+        )
+        emitEvent(
+            KoogEvent.ToolExecutionCompleted(
+                timestampMs = currentTimeMs(),
+                turnId = turnId,
+                phaseName = resolvedPhase.name,
+                toolCallId = request.toolCallId,
+                toolName = request.toolName,
+                result = result,
+                isPhaseTransition = true,
+            )
+        )
+        return ToolExecutionOutcome(result = result, phaseChanged = true)
     }
 
     private suspend fun executeToolAndAudit(tool: SecureTool, args: JsonObject): ToolResult {
@@ -406,60 +596,88 @@ public class ChatSession internal constructor(
         return result
     }
 
-    private fun appendToolMessage(message: ChatMessage) {
-        _state.update { state ->
-            state.copy(messages = state.messages + message)
+    private fun appendToolMessage(message: ChatMessage): Unit {
+        _state.update { current ->
+            current.copy(messages = current.messages + message)
         }
     }
 
-    private fun updateStreamingContent(messageId: String, content: String) {
-        _state.update { state ->
-            state.copy(
+    private fun appendToolResultMessage(
+        request: AIResponseChunk.ToolCallRequest,
+        result: ToolResult,
+    ): Unit {
+        appendToolMessage(
+            ChatMessage(
+                id = idGenerator(),
+                role = MessageRole.TOOL,
+                content = toolResultPayload(result),
+                toolName = request.toolName,
+                toolCallId = request.toolCallId,
+                toolKind = ToolMessageKind.RESULT,
+                timestampMs = currentTimeMs(),
+            )
+        )
+    }
+
+    private fun updateStreamingContent(messageId: String, content: String): Unit {
+        _state.update { current ->
+            current.copy(
                 streamingContent = content,
-                messages = state.messages.map { message ->
-                    if (message.id == messageId) message.copy(content = content) else message
-                }
+                messages = current.messages.map { message ->
+                    if (message.id == messageId) {
+                        message.copy(content = content)
+                    } else {
+                        message
+                    }
+                },
             )
         }
     }
 
-    private fun finalizeMessage(messageId: String, finalContent: String, toolsUsed: List<String>) {
-        _state.update { state ->
-            state.copy(
+    private fun finalizeMessage(
+        messageId: String,
+        finalContent: String,
+        toolsUsed: List<String>,
+    ): Unit {
+        _state.update { current ->
+            current.copy(
                 isStreaming = false,
                 streamingContent = "",
-                messages = state.messages.map { message ->
+                messages = current.messages.map { message ->
                     if (message.id == messageId) {
                         message.copy(
                             content = finalContent,
                             state = MessageState.COMPLETE,
-                            toolCallsUsed = toolsUsed
+                            toolCallsUsed = toolsUsed,
                         )
                     } else {
                         message
                     }
-                }
+                },
             )
         }
     }
 
-    private fun markMessageError(messageId: String, error: String) {
-        _state.update { state ->
-            state.copy(
+    private fun markMessageError(messageId: String, error: String): Unit {
+        _state.update { current ->
+            current.copy(
                 isStreaming = false,
                 streamingContent = "",
                 error = error,
-                messages = state.messages.map { message ->
-                    if (message.id == messageId) message.copy(state = MessageState.ERROR) else message
-                }
+                messages = current.messages.map { message ->
+                    if (message.id == messageId) {
+                        message.copy(state = MessageState.ERROR)
+                    } else {
+                        message
+                    }
+                },
             )
         }
     }
 
-    public fun close() {
-        activeJob?.cancel()
-        activeJob = null
-        permissionManager.clearPending()
+    private suspend fun emitEvent(event: KoogEvent): Unit {
+        _events.emit(event)
+        _currentContext.value.eventHandlers.dispatch(event)
     }
 }
 
@@ -467,11 +685,18 @@ private class RateLimiter(private val maxPerMinute: Int) {
     private val calls = ArrayDeque<Long>()
 
     fun tryAcquire(): Boolean {
-        if (maxPerMinute == 0) return true
+        if (maxPerMinute == 0) {
+            return true
+        }
+
         val now = currentTimeMs()
         val windowStart = now - 60_000L
-        while (calls.isNotEmpty() && calls.first() < windowStart) calls.removeFirst()
-        if (calls.size >= maxPerMinute) return false
+        while (calls.isNotEmpty() && calls.first() < windowStart) {
+            calls.removeFirst()
+        }
+        if (calls.size >= maxPerMinute) {
+            return false
+        }
         calls.addLast(now)
         return true
     }
@@ -481,7 +706,7 @@ private class ProviderStreamException(message: String) : IllegalStateException(m
 
 private data class ToolExecutionOutcome(
     val result: ToolResult,
-    val phaseChanged: Boolean = false
+    val phaseChanged: Boolean = false,
 )
 
 private val toolPayloadJson = Json { encodeDefaults = true }
@@ -492,7 +717,7 @@ private fun toolResultPayload(result: ToolResult): String = when (result) {
         buildJsonObject {
             put("status", "success")
             put("output", result.output)
-        }
+        },
     )
 
     is ToolResult.Denied -> toolPayloadJson.encodeToString(
@@ -500,7 +725,7 @@ private fun toolResultPayload(result: ToolResult): String = when (result) {
         buildJsonObject {
             put("status", "denied")
             put("reason", result.reason)
-        }
+        },
     )
 
     is ToolResult.Failure -> toolPayloadJson.encodeToString(
@@ -508,7 +733,7 @@ private fun toolResultPayload(result: ToolResult): String = when (result) {
         buildJsonObject {
             put("status", "error")
             put("message", result.message)
-        }
+        },
     )
 }
 

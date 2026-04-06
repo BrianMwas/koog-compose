@@ -132,7 +132,7 @@ class ChatSessionEventsTest {
     }
 }
 
-private fun eventContext(onEvent: (suspend (KoogEvent) -> Unit)? = null): KoogComposeContext = koogCompose {
+private fun eventContext(onEvent: (suspend (KoogEvent) -> Unit)? = null): KoogComposeContext<Unit> = koogCompose {
     provider {
         ollama(model = "demo-local")
     }
@@ -177,8 +177,8 @@ private class EventTestProvider(
 ) : AIProvider {
     private var index: Int = 0
 
-    override fun stream(
-        context: KoogComposeContext,
+    override fun <S> stream(
+        context: KoogComposeContext<S>,
         history: List<ChatMessage>,
         systemPrompt: String,
         attachments: List<Attachment>

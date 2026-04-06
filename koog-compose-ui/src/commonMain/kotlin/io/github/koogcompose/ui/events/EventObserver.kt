@@ -36,10 +36,10 @@ import kotlinx.coroutines.flow.collect
  * ```
  */
 @Composable
-fun EventObserver(
+public fun EventObserver(
     chatState: ChatState,
     onEvent: suspend (KoogEvent) -> Unit
-) {
+): Unit {
     LaunchedEffect(chatState) {
         chatState.eventFlow.collect { event ->
             onEvent(event)

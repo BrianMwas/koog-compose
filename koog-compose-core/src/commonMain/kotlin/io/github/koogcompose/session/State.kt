@@ -32,12 +32,12 @@ public class KoogStateStore<S>(initialState: S) {
     public val current: S get() = _state.value
 
     /** Atomically update state. */
-    public fun update(transform: (S) -> S) {
+    public fun update(transform: (S) -> S): Unit {
         _state.value = transform(_state.value)
     }
 
     /** Replace state entirely. */
-    public fun set(newState: S) {
+    public fun set(newState: S): Unit {
         _state.value = newState
     }
 }

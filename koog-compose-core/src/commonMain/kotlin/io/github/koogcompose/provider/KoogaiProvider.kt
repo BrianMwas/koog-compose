@@ -73,7 +73,7 @@ internal class KoogAIProvider<S>(
     private val enforcer: GuardrailEnforcer by lazy {
         GuardrailEnforcer(
             guardrails = context.config.guardrails,
-            auditLogger = AuditLogger(context.config.auditLoggingEnabled)
+            auditLogger = AuditLogger()
         )
     }
 

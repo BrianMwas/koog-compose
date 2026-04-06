@@ -33,8 +33,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp // ← correct package, matches ChatMessage
-import io.github.koogcompose.session.ChatAttachment
+import androidx.compose.ui.unit.dp
+import io.github.koogcompose.session.Attachment
 import io.github.koogcompose.ui.LocalChatColors
 import io.github.koogcompose.ui.LocalChatShapes
 import io.github.koogcompose.ui.state.ChatState
@@ -42,7 +42,7 @@ import io.github.koogcompose.ui.state.ChatState
 // ─── Theming contract ─────────────────────────────────────────────────────────
 
 @Immutable
-data class ChatInputBarColors(
+public data class ChatInputBarColors(
     val inputField: TextFieldColors,
     val sendActive: Color,
     val sendInactive: Color,
@@ -52,7 +52,7 @@ data class ChatInputBarColors(
 )
 
 @Immutable
-data class ChatInputBarDimensions(
+public data class ChatInputBarDimensions(
     val outerPadding: PaddingValues,
     val actionIconSize: Dp,
     val actionSpacing: Dp,
@@ -61,10 +61,10 @@ data class ChatInputBarDimensions(
 
 // ─── Defaults ─────────────────────────────────────────────────────────────────
 
-object ChatInputBarDefaults {
+public object ChatInputBarDefaults {
 
     @Composable
-    fun colors(
+    public fun colors(
         inputField: TextFieldColors = OutlinedTextFieldDefaults.colors(
             focusedBorderColor = MaterialTheme.colorScheme.primary,
             unfocusedBorderColor = MaterialTheme.colorScheme.outline,
@@ -77,7 +77,7 @@ object ChatInputBarDefaults {
         actionIcon: Color = MaterialTheme.colorScheme.onSurfaceVariant,
         attachmentChipBackground: Color = MaterialTheme.colorScheme.secondaryContainer,
         attachmentChipContent: Color = MaterialTheme.colorScheme.onSecondaryContainer,
-    ) = ChatInputBarColors(
+    ): ChatInputBarColors = ChatInputBarColors(
         inputField = inputField,
         sendActive = sendActive,
         sendInactive = sendInactive,
@@ -86,12 +86,12 @@ object ChatInputBarDefaults {
         attachmentChipContent = attachmentChipContent,
     )
 
-    fun dimensions(
+    public fun dimensions(
         outerPadding: PaddingValues = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
         actionIconSize: Dp = 24.dp,
         actionSpacing: Dp = 8.dp,
         maxInputLines: Int = 4,
-    ) = ChatInputBarDimensions(
+    ): ChatInputBarDimensions = ChatInputBarDimensions(
         outerPadding = outerPadding,
         actionIconSize = actionIconSize,
         actionSpacing = actionSpacing,
@@ -102,11 +102,11 @@ object ChatInputBarDefaults {
     // implementation("androidx.compose.material:material-icons-extended")
 
     @Composable
-    fun AttachmentAction(
+    public fun AttachmentAction(
         onClick: () -> Unit,
         colors: ChatInputBarColors,
         dimensions: ChatInputBarDimensions,
-    ) {
+    ): Unit {
         IconButton(onClick = onClick) {
             Icon(
                 imageVector = Icons.Default.AttachFile,
@@ -118,11 +118,11 @@ object ChatInputBarDefaults {
     }
 
     @Composable
-    fun RecordAction(
+    public fun RecordAction(
         onClick: () -> Unit,
         colors: ChatInputBarColors,
         dimensions: ChatInputBarDimensions,
-    ) {
+    ): Unit {
         IconButton(onClick = onClick) {
             Icon(
                 imageVector = Icons.Default.Mic,
@@ -134,13 +134,13 @@ object ChatInputBarDefaults {
     }
 
     @Composable
-    fun SendAction(
+    public fun SendAction(
         canSend: Boolean,
         onClick: () -> Unit,
         colors: ChatInputBarColors,
         dimensions: ChatInputBarDimensions,
         enabled: Boolean = true,
-    ) {
+    ): Unit {
         IconButton(
             onClick = onClick,
             enabled = enabled && canSend,
@@ -158,12 +158,12 @@ object ChatInputBarDefaults {
 // ─── Attachment chip ──────────────────────────────────────────────────────────
 
 @Composable
-fun AttachmentChip(
-    attachment: ChatAttachment,
-    onRemove: (ChatAttachment) -> Unit,
+public fun AttachmentChip(
+    attachment: Attachment,
+    onRemove: (Attachment) -> Unit,
     colors: ChatInputBarColors,
     modifier: Modifier = Modifier,
-) {
+): Unit {
     Row(
         modifier = modifier
             .clip(CircleShape)
@@ -240,7 +240,7 @@ fun AttachmentChip(
  * ```
  */
 @Composable
-fun ChatInputBar(
+public fun ChatInputBar(
     chatState: ChatState,
     modifier: Modifier = Modifier,
     colors: ChatInputBarColors = ChatInputBarDefaults.colors(),
@@ -251,10 +251,10 @@ fun ChatInputBar(
     leadingActions: @Composable (() -> Unit)? = null,
     trailingActions: @Composable (() -> Unit)? = null,
     attachmentPreview: @Composable ((
-        attachments: List<ChatAttachment>,
-        onRemove: (ChatAttachment) -> Unit,
+        attachments: List<Attachment>,
+        onRemove: (Attachment) -> Unit,
     ) -> Unit)? = null,
-) {
+): Unit {
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -318,8 +318,8 @@ fun ChatInputBar(
 
 @Composable
 private fun DefaultAttachmentPreview(
-    attachments: List<ChatAttachment>,
-    onRemove: (ChatAttachment) -> Unit,
+    attachments: List<Attachment>,
+    onRemove: (Attachment) -> Unit,
     colors: ChatInputBarColors,
 ) {
     Row(

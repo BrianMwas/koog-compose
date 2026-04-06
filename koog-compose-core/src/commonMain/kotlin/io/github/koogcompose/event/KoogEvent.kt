@@ -231,20 +231,20 @@ public sealed interface KoogEvent {
  * Handler for dispatching and receiving [KoogEvent]s.
  */
 public interface KoogEventHandler {
-    public fun onEvent(event: KoogEvent)
+    public fun onEvent(event: KoogEvent): Unit
 }
 
 /**
  * Registry for multiple [KoogEventHandler]s.
  */
-public class KoogEventBus internal constructor() {
+public class KoogEventBus {
     private val handlers = mutableListOf<KoogEventHandler>()
 
-    public fun register(handler: KoogEventHandler) {
+    public fun register(handler: KoogEventHandler): Unit {
         handlers.add(handler)
     }
 
-    public fun unregister(handler: KoogEventHandler) {
+    public fun unregister(handler: KoogEventHandler): Unit {
         handlers.remove(handler)
     }
 
@@ -252,7 +252,7 @@ public class KoogEventBus internal constructor() {
      * Dispatches an event to all registered handlers.
      * Marked as public to allow orchestration layers in other modules to emit events.
      */
-    public fun dispatch(event: KoogEvent) {
+    public fun dispatch(event: KoogEvent): Unit {
         handlers.forEach { it.onEvent(event) }
     }
 }
