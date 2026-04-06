@@ -33,6 +33,7 @@ jobs:
         with:
           ref: main
           token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
 
       - name: Read current version
         id: current
@@ -56,10 +57,10 @@ jobs:
             patch) PATCH=$(( PATCH + 1 )) ;;
           esac
 
-          echo "major=$MAJOR"   >> "$GITHUB_OUTPUT"
-          echo "minor=$MINOR"   >> "$GITHUB_OUTPUT"
-          echo "patch=$PATCH"   >> "$GITHUB_OUTPUT"
-          echo "build=$BUILD"   >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR"             >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR"             >> "$GITHUB_OUTPUT"
+          echo "patch=$PATCH"             >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD"             >> "$GITHUB_OUTPUT"
           echo "version=${MAJOR}.${MINOR}.${PATCH}" >> "$GITHUB_OUTPUT"
 
       - name: Write to gradle.properties
@@ -75,8 +76,7 @@ jobs:
           git config user.name  "koog-compose-bot[bot]"
           git config user.email "koog-compose-bot[bot]@users.noreply.github.com"
           git add gradle.properties
-          git commit -m "chore: bump ${{ inputs.bump_type }} version to ${{ steps.next.outputs.version }} [build ${{ steps.next.outputs.build }}]"
+          git commit -m "chore: bump ${{ inputs.bump_type }} version to ${{ steps.next.outputs.version }} [build ${{ steps.next.outputs.build }}] [skip ci]"
           git tag "v${{ steps.next.outputs.version }}"
           git push origin main
           git push origin "v${{ steps.next.outputs.version }}"
-          # ↑ Pushing the tag automatically triggers publish.yml
