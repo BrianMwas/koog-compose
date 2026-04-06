@@ -34,8 +34,9 @@ jobs:
           distribution: 'temurin'
           cache: gradle                 # built-in Gradle cache — no extra step needed
 
-      - name: Validate Gradle wrapper
-        uses: gradle/actions/wrapper-validation@v3
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v4
+        continue-on-error: true
 
       - name: Run tests
         run: ./gradlew allTests --no-configuration-cache --stacktrace

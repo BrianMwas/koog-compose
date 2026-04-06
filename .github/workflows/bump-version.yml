@@ -2,7 +2,7 @@ name: Bump Version
 
 on:
   workflow_run:
-    workflows: ["Publish to Maven Central"]   # must match name: in publish.yml exactly
+    workflows: ["Publish to Maven Central"]
     types: [completed]
 
 permissions:
@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event.workflow_run.conclusion == 'success' &&
-      github.actor != 'koog-compose-bot[bot]'
+      github.event.workflow_run.head_commit.author.name != 'koog-compose-bot[bot]'
 
     steps:
       - name: Create GitHub App token
@@ -29,18 +29,15 @@ jobs:
         with:
           ref: main
           token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 1
 
       - name: Read current version
         id: current
         run: |
-          MAJOR=$(grep "^VERSION_MAJOR=" gradle.properties | cut -d= -f2)
-          MINOR=$(grep "^VERSION_MINOR=" gradle.properties | cut -d= -f2)
-          PATCH=$(grep "^VERSION_PATCH=" gradle.properties | cut -d= -f2)
-          BUILD=$(grep "^VERSION_BUILD=" gradle.properties | cut -d= -f2)
-          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
-          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
-          echo "patch=$PATCH" >> "$GITHUB_OUTPUT"
-          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "major=$(grep '^VERSION_MAJOR=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "minor=$(grep '^VERSION_MINOR=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "patch=$(grep '^VERSION_PATCH=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
+          echo "build=$(grep '^VERSION_BUILD=' gradle.properties | cut -d= -f2)" >> "$GITHUB_OUTPUT"
 
       - name: Calculate next version
         id: next
@@ -48,8 +45,8 @@ jobs:
           NEXT_PATCH=$(( ${{ steps.current.outputs.patch }} + 1 ))
           NEXT_BUILD=$(( ${{ steps.current.outputs.build }} + 1 ))
           NEXT_VERSION="${{ steps.current.outputs.major }}.${{ steps.current.outputs.minor }}.${NEXT_PATCH}"
-          echo "patch=$NEXT_PATCH" >> "$GITHUB_OUTPUT"
-          echo "build=$NEXT_BUILD" >> "$GITHUB_OUTPUT"
+          echo "patch=$NEXT_PATCH"     >> "$GITHUB_OUTPUT"
+          echo "build=$NEXT_BUILD"     >> "$GITHUB_OUTPUT"
           echo "version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Write new version to gradle.properties
@@ -58,10 +55,12 @@ jobs:
           sed -i "s/^VERSION_BUILD=.*/VERSION_BUILD=${{ steps.next.outputs.build }}/" gradle.properties
           sed -i "s/^VERSION_NAME=.*/VERSION_NAME=${{ steps.next.outputs.version }}/" gradle.properties
 
-      - name: Commit and push
+      - name: Commit, tag, and push
         run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "koog-compose-bot[bot]"
+          git config user.email "koog-compose-bot[bot]@users.noreply.github.com"
           git add gradle.properties
           git commit -m "chore: bump version to ${{ steps.next.outputs.version }} [build ${{ steps.next.outputs.build }}] [skip ci]"
+          git tag "v${{ steps.next.outputs.version }}"
           git push origin main
+          git push origin "v${{ steps.next.outputs.version }}"
