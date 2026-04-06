@@ -19,11 +19,12 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            api(project(":koog-compose-ui"))
+            api(project(":koog-compose-core"))
+            implementation(libs.koog.agents.core)
+            implementation(libs.koog.prompt.executor)
+            implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlin.test)
-            implementation(libs.kotlinx.coroutines.test)
             implementation(libs.kotlinx.serialization.json)
-            implementation(libs.turbine)
         }
     }
 }

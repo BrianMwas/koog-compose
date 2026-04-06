@@ -15,7 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -29,12 +29,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
+import coil3.compose.AsyncImage
+import coil3.compose.LocalPlatformContext
+import coil3.request.ImageRequest
 import io.github.koogcompose.session.Attachment
 import io.github.koogcompose.session.ChatMessage
 import io.github.koogcompose.session.MessageRole
@@ -231,9 +231,8 @@ private fun ImageAttachment(
     bubbleShape: Shape,
 ) {
     AsyncImage(
-        model = ImageRequest.Builder(LocalContext.current)
+        model = ImageRequest.Builder(LocalPlatformContext.current)
             .data(attachment.uri)
-            .crossfade(true)
             .build(),
         contentDescription = attachment.displayName,
         contentScale = ContentScale.Crop,
@@ -259,7 +258,7 @@ private fun FileAttachment(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Icon(
-            imageVector = Icons.Default.InsertDriveFile,
+            imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
             contentDescription = null,
             tint = contentColor,
             modifier = Modifier.size(20.dp),
