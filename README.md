@@ -7,8 +7,8 @@
 
 `koog-compose` is a developer-first Kotlin Multiplatform (KMP) runtime for building AI-driven features that orchestrate app logic, device capabilities, and UI from a single declarative DSL.
 
-Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between AI agent graphs and real app surfaces — giving you typed shared state, phase-aware conversations, plug-and-play persistence, and Material 3 UI components that work across Android, iOS, and Desktop.
-
+Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between AI agent graphs and real app surfaces — giving you typed shared state, phase-aware conversations, plug-and-play persistence, token-level streaming, and Material 3 UI components that work across Android, iOS, and Desktop.
+ 
 ---
 
 ## Why koog-compose?
@@ -20,7 +20,9 @@ Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges 
 | Pass state between tools and UI via globals or hacks | Typed `KoogStateStore<S>` flows from tools straight to Compose UI |
 | Build confirmation dialogs per feature | `AutoConfirmationHandler` with `SAFE` / `SENSITIVE` / `CRITICAL` tiers |
 | Reinvent session persistence each project | Drop-in `session-room` module with your own Room DAO |
-
+| Blank UI bubble while LLM thinks | `responseStream: Flow<String>` emits tokens as they arrive |
+| Raw exceptions surface to UI on failure | Retry with backoff + stuck detection + graceful fallback messages |
+ 
 ---
 
 ## Modules
@@ -32,17 +34,17 @@ io.github.brianmwas.koog_compose:koog-compose-device        ← Android/iOS devi
 io.github.brianmwas.koog_compose:koog-compose-testing       ← Deterministic fake executor + test DSL
 io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed persistent memory       (optional)
 ```
-
+ 
 ---
 
 ## Installation
 
 ```kotlin
 dependencies {
-    implementation("io.github.brianmwas.koog_compose:koog-compose-core:0.1.0")
-    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:0.1.0")            // Compose UI components
-    implementation("io.github.brianmwas.koog_compose:koog-compose-device:0.1.0")        // Android/iOS device tools
-    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:0.1.0")  // Persistent memory via Room
+    implementation("io.github.brianmwas.koog_compose:koog-compose-core:0.1.2")
+    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:0.1.2")            // Compose UI components
+    implementation("io.github.brianmwas.koog_compose:koog-compose-device:0.1.2")        // Android/iOS device tools
+    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:0.1.2")  // Persistent memory via Room
 }
 ```
 
@@ -51,7 +53,7 @@ dependencies {
 > maven("https://s01.oss.sonatype.org/content/repositories/snapshots/")
 > ```
 > Then use version `1.1.0-SNAPSHOT`.
-
+ 
 ---
 
 ## Quick start
@@ -77,10 +79,9 @@ val context = koogCompose<AppState> {
             model = "claude-3-5-sonnet"
         }
     }
-
-    // Typed initial state — S is inferred from here
+ 
     initialState { AppState(userId = currentUserId) }
-
+ 
     phases {
         phase("greeting") {
             instructions { "Greet the user and offer to check their location." }
@@ -92,17 +93,30 @@ val context = koogCompose<AppState> {
             instructions { "Confirm the detected location with the user." }
         }
     }
+ 
+    config {
+        retry {
+            maxAttempts = 3
+            initialDelayMs = 500L
+        }
+        stuckDetection {
+            threshold = 3
+            fallbackMessage = "I'm having trouble with that. Let me connect you to support."
+        }
+    }
+ 
+    events {
+        onAgentStuck { event ->
+            // navigate to support, log analytics, etc.
+        }
+        onTurnFailed { event ->
+            // show error UI
+        }
+        onToolExecutionCompleted { event ->
+            // partial success — event.result has what succeeded before any failure
+        }
+    }
 }
-```
-
-Platform-specific tools (e.g. GPS) are injected at construction time via your DI container — not inside the DSL:
-
-```kotlin
-// Construct your tool with the typed store
-val locationTool = GetCurrentLocationTool(
-    stateStore = context.stateStore!!,   // KoogStateStore<AppState>
-    locationClient = fusedLocationClient
-)
 ```
 
 ### 3. Write a stateful tool
@@ -114,11 +128,11 @@ class GetCurrentLocationTool(
     override val stateStore: KoogStateStore<AppState>,
     private val locationClient: FusedLocationProviderClient
 ) : StatefulTool<AppState>() {
-
+ 
     override val name = "GetCurrentLocation"
     override val description = "Fetch the device GPS coordinates"
     override val permissionLevel = PermissionLevel.SENSITIVE  // triggers confirmation UI
-
+ 
     override suspend fun execute(args: JsonObject): ToolResult {
         val coords = locationClient.awaitLastLocation()
         stateStore.update { it.copy(location = coords) }
@@ -134,44 +148,67 @@ class ChatViewModel(
     context: KoogComposeContext<AppState>,
     executor: PromptExecutor
 ) : ViewModel() {
-
+ 
     val session = PhaseSession(
         context   = context,
         executor  = executor,
         sessionId = "user_brian",
         scope     = viewModelScope
     )
-
-    // Agent/conversation concerns
-    val isRunning    = session.isRunning       // StateFlow<Boolean>
-    val lastResponse = session.lastResponse    // StateFlow<String?>
-    val currentPhase = session.currentPhase    // StateFlow<String>
-
-    // Domain/app state — updated by tools, observed by UI
-    val appState     = session.appState        // StateFlow<AppState>?
+ 
+    val isRunning      = session.isRunning       // StateFlow<Boolean>
+    val lastResponse   = session.lastResponse    // StateFlow<String?>
+    val currentPhase   = session.currentPhase    // StateFlow<String>
+    val responseStream = session.responseStream  // Flow<String> — token by token
+    val turnId         = session.turnId          // StateFlow<Int> — increments per send()
+    val appState       = session.appState        // StateFlow<AppState>?
+    val error          = session.error           // StateFlow<Throwable?>
 }
 ```
 
-### 5. Add the Compose UI
+### 5. Streaming tokens in Compose
+
+`responseStream` emits tokens as they arrive from the LLM — wired directly into
+Koog's pipeline feature system via `StreamingFeature`. Use `turnId` to reset
+accumulation on each new `send()` call:
+
+```kotlin
+@Composable
+fun StreamingMessage(viewModel: ChatViewModel) {
+    val displayText by remember {
+        viewModel.turnId.flatMapLatest { _ ->
+            viewModel.responseStream
+                .runningFold("") { acc, token -> acc + token }
+        }
+    }.collectAsState(initial = "")
+ 
+    Text(text = displayText)
+}
+```
+
+If you only need the final assembled response:
+
+```kotlin
+val fullResponse by viewModel.lastResponse.collectAsState()
+```
+
+### 6. Add the Compose UI
 
 ```kotlin
 @Composable
 fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
     val appState  by viewModel.appState.collectAsState()
     val isRunning by viewModel.isRunning.collectAsState()
-
-    // appState drives your UI content (show location, intent resolved, etc.)
-    // isRunning drives your loading indicator
-
+ 
     val chatState = rememberChatState(viewModel.session)
     val snackbarHostState = remember { SnackbarHostState() }
-
+ 
     // Handles SAFE / SENSITIVE / CRITICAL confirmation tiers automatically
     ConfirmationObserver(
         chatState = chatState,
         handler = rememberAutoConfirmationHandler(snackbarHostState)
     )
-
+ 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = { ChatInputBar(chatState) }
@@ -181,7 +218,7 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
 }
 ```
 
-### 6. Add persistent memory (optional)
+### 7. Add persistent memory (optional)
 
 ```kotlin
 val session = PhaseSession(
@@ -192,7 +229,7 @@ val session = PhaseSession(
     scope     = viewModelScope
 )
 ```
-
+ 
 ---
 
 ## Core concepts
@@ -218,9 +255,43 @@ greeting ──► location_check ──► confirm_location ──► END
 
 Transitions are driven by the LLM reading the current `AppState` — you define the conditions, the agent decides when they're met.
 
+### Streaming
+
+`PhaseSession` exposes `responseStream: Flow<String>` that emits tokens as they arrive
+from the LLM. The tap is implemented as a Koog pipeline feature (`StreamingFeature`) that
+intercepts `TextDelta` frames from `ContextualPromptExecutor` — no polling, no executor
+wrapping. `lastResponse` always holds the full assembled string on completion. `turnId`
+increments on every `send()` so collectors know when to reset accumulation.
+
+### Resilience
+
+`PhaseSession.send()` has two layers of protection against failures:
+
+**Retry with backoff** — driven by `RetryPolicy` in `KoogConfig`. On each failed attempt
+the agent is rebuilt to avoid reusing a corrupted session. After all attempts are exhausted,
+`KoogEvent.TurnFailed` is dispatched and `error` is set.
+
+**Stuck detection** — tracks consecutive identical phase + input pairs. When the threshold
+is hit, `KoogEvent.AgentStuck` is dispatched, the fallback message is surfaced as
+`lastResponse`, and the stuck state resets — no raw error, no halt.
+
+```kotlin
+config {
+    retry {
+        maxAttempts = 3
+        initialDelayMs = 500L  // doubles on each attempt
+    }
+    stuckDetection {
+        threshold = 3
+        fallbackMessage = "I'm having trouble with that. Let me connect you to support."
+    }
+}
+```
+
 ### Security tiers
 
-Every tool declares a `PermissionLevel`. `GuardrailEnforcer` intercepts all tool calls before execution and `AutoConfirmationHandler` maps tiers to the appropriate UI friction:
+Every tool declares a `PermissionLevel`. `GuardrailEnforcer` intercepts all tool calls
+before execution and `AutoConfirmationHandler` maps tiers to the appropriate UI friction:
 
 | Tier | UI treatment | Example |
 |---|---|---|
@@ -231,14 +302,11 @@ Every tool declares a `PermissionLevel`. `GuardrailEnforcer` intercepts all tool
 Guardrails also enforce rate limits and action allowlists at the config level:
 
 ```kotlin
-koogCompose<AppState> {
-    // ...
-    config {
-        guardrails {
-            rateLimit("GetCurrentLocation", max = 3, per = 1.minutes)
-            allowIntent("android.intent.action.SEND")
-            maxScheduledJobs(2)
-        }
+config {
+    guardrails {
+        rateLimit("GetCurrentLocation", max = 3, per = 1.minutes)
+        allowIntent("android.intent.action.SEND")
+        maxScheduledJobs(2)
     }
 }
 ```
@@ -258,12 +326,29 @@ interface SessionStore {
 
 The `:session-room` module provides a ready-made Room implementation.
 
+### Events
+
+Observe runtime events via the `events { }` DSL block:
+
+```kotlin
+events {
+    onTurnStarted { event -> }
+    onTurnCompleted { event -> }
+    onTurnFailed { event -> }
+    onPhaseTransitioned { event -> }
+    onToolCallRequested { event -> }
+    onToolExecutionCompleted { event -> }  // partial success visibility
+    onAgentStuck { event -> }              // stuck detection fired
+    onProviderChunkReceived { event -> }
+}
+```
+
 ### Testing
 
 `koog-compose-testing` gives you a deterministic harness for chat and phase flows.
-It keeps the real `ChatSession` tool/phase loop, but swaps the live provider for a scripted
-`FakePromptExecutor`, so you can prove transitions, tool calls, confirmation behavior, and
-shared-state mutation in unit tests without hitting a real model.
+It keeps the real `PhaseSession` tool/phase loop but swaps the live provider for a
+scripted `FakePromptExecutor`, so you can prove transitions, tool calls, confirmation
+behavior, and shared-state mutation in unit tests without hitting a real model.
 
 ```kotlin
 val session = testPhaseSession(context) {
@@ -273,9 +358,9 @@ val session = testPhaseSession(context) {
         respondWith("Sure, fetching location now.")
     }
 }
-
+ 
 session.send("I need help with my location")
-
+ 
 assertPhase(session, "location_check")
 assertToolCalled(session, "RecordLocationIntent")
 assertState(session) { state ->
@@ -317,7 +402,7 @@ val context = koogCompose {
 }
 // context is KoogComposeContext<Unit>
 ```
-
+ 
 ---
 
 ## Platform support
@@ -326,11 +411,13 @@ val context = koogCompose {
 |---|---|---|---|
 | Core DSL & phases | ✅ | ✅ | ✅ |
 | Typed shared state | ✅ | ✅ | ✅ |
+| Token streaming | ✅ | ✅ | ✅ |
+| Retry & stuck detection | ✅ | ✅ | ✅ |
 | Compose UI | ✅ | ✅ | ✅ |
 | Room session store | ✅ | ✅ | — |
 | Device tools (location) | ✅ | 🔜 v1.1 | — |
 | WorkManager proactive agents | ✅ | — | — |
-
+ 
 ---
 
 ## Build & test
@@ -338,17 +425,17 @@ val context = koogCompose {
 ```bash
 # Run common (KMP) tests
 ./gradlew :koog-compose-core:desktopTest
-
+ 
 # Run Android instrumented tests
 ./gradlew :koog-compose-core:connectedAndroidTest
-
+ 
 # Build the sample app
 ./gradlew :sample-app:assembleDebug
-
+ 
 # Generate KDoc
 ./gradlew dokkaHtml
 ```
-
+ 
 ---
 
 ## Roadmap
@@ -378,10 +465,11 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
 
 ```
 Copyright 2025 Brian Mwangi
-
+ 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
-
+ 
     https://www.apache.org/licenses/LICENSE-2.0
 ```
+ 
