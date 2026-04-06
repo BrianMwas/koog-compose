@@ -1,6 +1,7 @@
 package io.github.koogcompose.testing
 
-import io.github.koogcompose.session.AIProvider
+
+import io.github.koogcompose.provider.AIProvider
 import io.github.koogcompose.session.AIResponseChunk
 import io.github.koogcompose.session.Attachment
 import io.github.koogcompose.session.ChatMessage

@@ -10,7 +10,9 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.serialization.kotlinx.KotlinxSerializer
 import io.github.koogcompose.provider.KoogAIProvider
 import io.github.koogcompose.session.KoogComposeContext
+import io.github.koogcompose.session.StreamingFeature
 import io.github.koogcompose.tool.toKoogTool
+import kotlinx.coroutines.flow.MutableSharedFlow
 
 /**
  * Creates a single [AIAgent] whose strategy is the multi-phase subgraph pipeline
@@ -31,7 +33,8 @@ public object PhaseAwareAgent {
     public fun <S> create(
         context: KoogComposeContext<S>,
         promptExecutor: PromptExecutor,
-        strategyName: String = "koog-compose-phases"
+        strategyName: String = "koog-compose-phases",
+        tokenSink: MutableSharedFlow<String>? = null
     ): AIAgent<String, String> {
 
         // Resolve [ToolName] refs in all phase instructions before building
@@ -84,7 +87,14 @@ public object PhaseAwareAgent {
             promptExecutor = promptExecutor,
             agentConfig = agentConfig,
             strategy = strategy,
-            toolRegistry = globalKoogRegistry
+            toolRegistry = globalKoogRegistry,
+            installFeatures = {
+                if (tokenSink != null) {
+                    install(StreamingFeature) {
+                        this.tokenSink = tokenSink
+                    }
+                }
+            }
         )
     }
 }
