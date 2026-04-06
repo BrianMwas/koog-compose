@@ -2,6 +2,7 @@ package io.github.koogcompose.session
 
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.model.PromptExecutor
+import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -65,6 +66,10 @@ public class PhaseSession<S>(
     private val _turnId = MutableStateFlow(0)
     public val turnId: StateFlow<Int> = _turnId.asStateFlow()
 
+    // ── Stuck detection tracking ───────────────────────────────────────────
+    private var lastPhaseInput: String? = null
+    private var consecutivePhaseHits: Int = 0
+
     private val _error = MutableStateFlow<Throwable?>(null)
     public val error: StateFlow<Throwable?> = _error.asStateFlow()
 
@@ -94,18 +99,76 @@ public class PhaseSession<S>(
             _error.value = null
             _turnId.value += 1
 
+            // ── Stuck detection ────────────────────────────────────────────
+            val stuckConfig = context.config.stuckDetection
+            if (stuckConfig != null) {
+                if (lastPhaseInput == "${_currentPhase.value}:$userMessage") {
+                    consecutivePhaseHits++
+                } else {
+                    consecutivePhaseHits = 1
+                    lastPhaseInput = "${_currentPhase.value}:$userMessage"
+                }
 
-            try {
-                ensureInitialised()
-                val result = requireNotNull(agent) { "Agent failed to initialise." }
-                    .run(userMessage)
-                _lastResponse.value = result
-                persistTurn(userMessage, result)
-            } catch (e: Throwable) {
-                _error.value = e
-            } finally {
-                _isRunning.value = false
+                if (consecutivePhaseHits >= stuckConfig.threshold) {
+                    consecutivePhaseHits = 0
+                    lastPhaseInput = null
+                    _lastResponse.value = stuckConfig.fallbackMessage
+                    context.eventHandlers.dispatch(
+                        KoogEvent.AgentStuck(
+                            timestampMs = Clock.System.now().toEpochMilliseconds(),
+                            turnId = _turnId.value.toString(),
+                            phaseName = _currentPhase.value,
+                            consecutiveCount = stuckConfig.threshold,
+                            fallbackMessage = stuckConfig.fallbackMessage
+                        )
+                    )
+                    _isRunning.value = false
+                    return@launch
+                }
             }
+
+            // ── Retry with backoff ─────────────────────────────────────────
+            val retryPolicy = context.config.retryPolicy
+            var lastError: Throwable? = null
+            var delayMs = retryPolicy.initialDelayMs
+
+            repeat(retryPolicy.maxAttempts) { attempt ->
+                if (lastError != null) {
+                    kotlinx.coroutines.delay(delayMs)
+                    delayMs *= 2
+                }
+                try {
+                    ensureInitialised()
+                    val result = requireNotNull(agent) { "Agent failed to initialise." }
+                        .run(userMessage)
+                    _lastResponse.value = result
+                    persistTurn(userMessage, result)
+                    lastError = null
+                    return@repeat  // success — exit retry loop
+                } catch (e: Throwable) {
+                    lastError = e
+                    // reset agent on failure so ensureInitialised rebuilds it
+                    if (attempt < retryPolicy.maxAttempts - 1) {
+                        agent = null
+                        sessionInitialised = false
+                    }
+                }
+            }
+
+            // All attempts exhausted
+            if (lastError != null) {
+                _error.value = lastError
+                context.eventHandlers.dispatch(
+                    KoogEvent.TurnFailed(
+                        timestampMs = Clock.System.now().toEpochMilliseconds(),
+                        turnId = _turnId.value.toString(),
+                        phaseName = _currentPhase.value,
+                        message = lastError!!.message ?: "Unknown error after ${retryPolicy.maxAttempts} attempts"
+                    )
+                )
+            }
+
+            _isRunning.value = false
         }
     }
 

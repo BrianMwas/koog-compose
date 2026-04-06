@@ -32,6 +32,15 @@ public sealed interface KoogEvent {
         val attachmentCount: Int
     ) : KoogEvent
 
+    /** Fired when the agent visits the same phase with equivalent input N times consecutively. */
+    public data class AgentStuck(
+        override val timestampMs: Long,
+        override val turnId: String,
+        override val phaseName: String?,
+        val consecutiveCount: Int,
+        val fallbackMessage: String
+    ) : KoogEvent
+
     /** Triggered when a provider starts a new generation pass. */
     public data class ProviderPassStarted(
         override val timestampMs: Long,
