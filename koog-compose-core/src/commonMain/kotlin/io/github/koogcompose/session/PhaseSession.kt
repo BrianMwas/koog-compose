@@ -149,8 +149,12 @@ public class PhaseSession<S>(
             context
         }
 
-        val tappingExecutor = StreamTappingExecutor(executor, _responseStream)
-        agent = PhaseAwareAgent.create(activeContext, tappingExecutor, strategyName)
+        agent = PhaseAwareAgent.create(
+            context = activeContext,
+            promptExecutor = executor,
+            strategyName = strategyName,
+            tokenSink = _responseStream
+        )
         sessionInitialised = true
     }
 

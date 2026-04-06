@@ -27,9 +27,18 @@ internal class StreamTappingExecutor(
         .onEach { frame ->
             when (frame) {
                 is StreamFrame.TextDelta -> tokenSink.emit(frame.text)
-                else -> Unit // ignore tool calls, reasoning, end frames
+                else -> Unit
             }
         }
+
+    override suspend fun execute(
+        prompt: Prompt,
+        model: LLModel,
+        tools: List<ToolDescriptor>
+    ): List<Message.Response> = delegate.execute(prompt, model, tools)
+
+    override suspend fun moderate(prompt: Prompt, model: LLModel): ModerationResult =
+        delegate.moderate(prompt, model)
 
     override fun close() = delegate.close()
 }
