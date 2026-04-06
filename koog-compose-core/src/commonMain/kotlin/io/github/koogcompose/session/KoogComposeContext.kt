@@ -12,7 +12,7 @@ import io.github.koogcompose.provider.ProviderConfigBuilder
 import io.github.koogcompose.security.Guardrails
 import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolRegistry
-import kotlin.ConsistentCopyVisibility
+import kotlin.jvm.JvmName
 
 
 /**
@@ -22,7 +22,7 @@ import kotlin.ConsistentCopyVisibility
 public sealed class HistoryCompression {
 
     /**
-     * Summarises the entire history into one TLDR message.
+     * Summarizes the entire history into one TLDR message.
      * Best for general use — maintains full context awareness
      * while drastically reducing token count.
      */
@@ -134,8 +134,11 @@ public data class KoogConfig(
     val llmParams: LLMParamsConfig? = null,
     val responseCache: Boolean = false,
     val structureFixingRetries: Int = 3,
+    val maxAgentIterations: Int = 15,
     val guardrails: Guardrails = Guardrails.Default
 ) {
+
+
     public class Builder {
         public var streamingEnabled: Boolean = true
         public var rateLimitPerMinute: Int = 0
@@ -143,25 +146,27 @@ public data class KoogConfig(
         public var requireConfirmationForSensitive: Boolean = true
         public var responseCache: Boolean = false
         public var structureFixingRetries: Int = 3
+
+        public var maxAgentIterations: Int = 10
         
         private var historyCompression: HistoryCompressionConfig? = null
         private var retryPolicy: RetryPolicy = RetryPolicy()
         private var llmParams: LLMParamsConfig? = null
         private var guardrails: Guardrails = Guardrails.Default
 
-        public fun historyCompression(block: HistoryCompressionConfigBuilder.() -> Unit) {
+        public fun historyCompression(block: HistoryCompressionConfigBuilder.() -> Unit): Unit {
             historyCompression = HistoryCompressionConfigBuilder().apply(block).build()
         }
 
-        public fun retry(block: RetryPolicyBuilder.() -> Unit) {
+        public fun retry(block: RetryPolicyBuilder.() -> Unit): Unit {
             retryPolicy = RetryPolicyBuilder().apply(block).build()
         }
 
-        public fun llmParams(block: LLMParamsConfigBuilder.() -> Unit) {
+        public fun llmParams(block: LLMParamsConfigBuilder.() -> Unit): Unit {
             llmParams = LLMParamsConfigBuilder().apply(block).build()
         }
 
-        public fun guardrails(block: Guardrails.Builder.() -> Unit) {
+        public fun guardrails(block: Guardrails.Builder.() -> Unit): Unit {
             guardrails = Guardrails.Builder().apply(block).build()
         }
 
@@ -175,6 +180,7 @@ public data class KoogConfig(
             llmParams = llmParams,
             structureFixingRetries = structureFixingRetries,
             responseCache = responseCache,
+            maxAgentIterations = maxAgentIterations,
             guardrails = guardrails
         )
     }
@@ -218,88 +224,103 @@ public class LLMParamsConfigBuilder {
 /**
  * The central runtime object for koog-compose.
  */
-@ConsistentCopyVisibility
-public data class KoogComposeContext private constructor(
+public data class KoogComposeContext<S>(
     val providerConfig: ProviderConfig,
     val promptStack: PromptStack,
     val toolRegistry: ToolRegistry,
     val phaseRegistry: PhaseRegistry = PhaseRegistry.Empty,
     val activePhaseName: String? = null,
     val eventHandlers: EventHandlers = EventHandlers.Empty,
+    val stateStore: KoogStateStore<S>?,          // ← typed, not <*>
     val config: KoogConfig,
 ) {
     public fun createProvider(): AIProvider = KoogAIProvider(this)
+    public val provider: AIProvider
+        get() = createProvider()
 
     public val activePhase: Phase? get() = activePhaseName?.let { phaseRegistry.resolve(it) }
 
-    public fun withSessionContext(context: String): KoogComposeContext = copy(
+    public fun withSessionContext(context: String): KoogComposeContext<S> = copy(
         promptStack = promptStack.withSessionContext(context)
     )
 
-    public fun withTool(tool: SecureTool): KoogComposeContext = copy(
+    public fun withTool(tool: SecureTool): KoogComposeContext<S> = copy(
         toolRegistry = toolRegistry.plus(tool)
     )
 
-    public fun withPhase(name: String): KoogComposeContext = copy(activePhaseName = name)
+    public fun withPhase(name: String): KoogComposeContext<S> = copy(activePhaseName = name)
 
     public fun resolveEffectiveInstructions(): String {
-        val globalPrompt = promptStack.resolve()
-        val activePhase = activePhaseName?.let { phaseRegistry.resolve(it) }
-            ?: phaseRegistry.all.firstOrNull()
-        return if (activePhase != null) {
-            "$globalPrompt\n\n${activePhase.instructions}"
-        } else {
-            globalPrompt
+        val globalPrompt = promptStack.resolve().trim()
+        val phase = activePhase ?: phaseRegistry.initialPhase
+        if (phase == null) {
+            return globalPrompt
         }
+
+        return buildList {
+            if (globalPrompt.isNotBlank()) {
+                add(globalPrompt)
+            }
+            add("CURRENT PHASE: ${phase.name}")
+            if (phase.resolvedInstructions.isNotBlank()) {
+                add(phase.resolvedInstructions.trim())
+            }
+        }.joinToString(separator = "\n\n")
     }
 
     public fun resolveEffectiveTools(): List<SecureTool> {
-        val baseTools = activePhase?.toolRegistry?.all ?: toolRegistry.all
-        val transitionTools = activePhase?.transitions?.map { it.toTool() } ?: emptyList()
+        val phase = activePhase ?: phaseRegistry.initialPhase
+        val baseTools = phase?.toolRegistry?.all ?: toolRegistry.all
+        val transitionTools = phase?.transitions?.map { it.toTool() } ?: emptyList()
         return baseTools + transitionTools
     }
 
-    public class Builder {
+    public class Builder<S> {
         private var providerConfig: ProviderConfig? = null
         private var promptStack: PromptStack = PromptStack.Empty
         private var toolRegistry: ToolRegistry = ToolRegistry.Empty
         private var phaseRegistry: PhaseRegistry = PhaseRegistry.Empty
         private var activePhaseName: String? = null
+        private var stateStore: KoogStateStore<S>? = null
         private var eventHandlers: EventHandlers = EventHandlers.Empty
         private var config: KoogConfig = KoogConfig()
 
-        public fun provider(block: ProviderConfigBuilder.() -> Unit) {
+        public fun provider(block: ProviderConfigBuilder.() -> Unit): Unit {
             providerConfig = ProviderConfigBuilder().apply(block).build()
         }
 
-        public fun prompt(block: PromptStack.Builder.() -> Unit) {
+        public fun prompt(block: PromptStack.Builder.() -> Unit): Unit {
             promptStack = PromptStack(block)
         }
 
-        public fun tools(block: ToolRegistry.Builder.() -> Unit) {
+        public fun tools(block: ToolRegistry.Builder.() -> Unit): Unit {
             toolRegistry = ToolRegistry(block)
         }
 
-        public fun phases(block: PhaseRegistry.Builder.() -> Unit) {
+        public fun phases(block: PhaseRegistry.Builder.() -> Unit): Unit {
             phaseRegistry = PhaseRegistry.Builder().apply(block).build()
             if (activePhaseName == null) {
                 activePhaseName = phaseRegistry.all.firstOrNull()?.name
             }
         }
 
-        public fun initialPhase(name: String) {
+        public fun initialState(block: () -> S): Unit {
+            stateStore = KoogStateStore(block())
+        }
+
+        public fun initialPhase(name: String): Unit {
             activePhaseName = name
         }
 
-        public fun events(block: EventHandlers.Builder.() -> Unit) {
+        public fun events(block: EventHandlers.Builder.() -> Unit): Unit {
             eventHandlers = EventHandlers(block)
         }
 
-        public fun config(block: KoogConfig.Builder.() -> Unit) {
+        public fun config(block: KoogConfig.Builder.() -> Unit): Unit {
             config = KoogConfig(block)
         }
 
-        public fun build(): KoogComposeContext = KoogComposeContext(
+        public fun build(): KoogComposeContext<S> = KoogComposeContext(
             providerConfig = providerConfig
                 ?: error("koog-compose: provider { } block is required."),
             promptStack = promptStack,
@@ -307,18 +328,23 @@ public data class KoogComposeContext private constructor(
             phaseRegistry = phaseRegistry,
             activePhaseName = activePhaseName,
             eventHandlers = eventHandlers,
+            stateStore = stateStore,
             config = config
         )
     }
 
     public companion object {
-        public operator fun invoke(block: Builder.() -> Unit): KoogComposeContext =
-            Builder().apply(block).build()
+        public operator fun <S> invoke(block: Builder<S>.() -> Unit): KoogComposeContext<S> =
+            Builder<S>().apply(block).build()
     }
 }
 
-/**
- * Top-level DSL entry point.
- */
-public fun koogCompose(block: KoogComposeContext.Builder.() -> Unit): KoogComposeContext =
+// Stateless sessions (no shared state needed)
+@JvmName("koogComposeStateless")
+public fun koogCompose(block: KoogComposeContext.Builder<Unit>.() -> Unit): KoogComposeContext<Unit> =
+    KoogComposeContext(block)
+
+// Stateful sessions — infer S from the initialState { } block
+@JvmName("koogComposeStateful")
+public fun <S> koogCompose(block: KoogComposeContext.Builder<S>.() -> Unit): KoogComposeContext<S> =
     KoogComposeContext(block)

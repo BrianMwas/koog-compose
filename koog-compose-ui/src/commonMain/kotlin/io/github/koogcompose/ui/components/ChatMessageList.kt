@@ -36,7 +36,6 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import io.github.koogcompose.session.Attachment
-import io.github.koogcompose.session.ChatAttachment
 import io.github.koogcompose.session.ChatMessage
 import io.github.koogcompose.session.MessageRole
 import io.github.koogcompose.session.ToolMessageKind
@@ -73,13 +72,13 @@ import io.github.koogcompose.ui.state.ChatState
  * ```
  */
 @Composable
-fun ChatMessageList(
+public fun ChatMessageList(
     chatState: ChatState,
     modifier: Modifier = Modifier,
     showSystemMessages: Boolean = false,
     showToolCallMessages: Boolean = false,
     messageContent: @Composable ((ChatMessage) -> Unit)? = null,
-) {
+): Unit {
     val sessionState by chatState.sessionStateFlow.collectAsState()
     ChatMessageList(
         messages = sessionState.messages,
@@ -104,13 +103,13 @@ fun ChatMessageList(
  * @param messageContent Optional custom composable for each message. Defaults to [DefaultChatMessage].
  */
 @Composable
-fun ChatMessageList(
+public fun ChatMessageList(
     messages: List<ChatMessage>,
     modifier: Modifier = Modifier,
     showSystemMessages: Boolean = false,
     showToolCallMessages: Boolean = false,
     messageContent: @Composable ((ChatMessage) -> Unit)? = null,
-) {
+): Unit {
     val visibleMessages = messages.filter { message ->
         when (message.role) {
             MessageRole.SYSTEM -> showSystemMessages

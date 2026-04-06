@@ -4,10 +4,15 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import io.github.koogcompose.event.KoogEvent
+import io.github.koogcompose.security.PendingConfirmation
 import io.github.koogcompose.session.Attachment
 import io.github.koogcompose.session.ChatSession
+import io.github.koogcompose.session.ChatSessionState
 import io.github.koogcompose.session.KoogComposeContext
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 
@@ -21,40 +26,44 @@ import kotlinx.coroutines.launch
  * is collected from StateFlow.
  */
 @Stable
-class ChatState internal constructor(
+public class ChatState internal constructor(
     internal val session: ChatSession,
     private val scope: CoroutineScope
 ) {
     // ── Input state ───────────────────────────────────────────────────────────
 
-    var inputText by mutableStateOf("")
+    public var inputText: String by mutableStateOf("")
         private set
 
-    var attachments by mutableStateOf<List<Attachment>>(emptyList())
+    public var attachments: List<Attachment> by mutableStateOf(emptyList())
         private set
 
     // ── Session state (collected in composables via collectAsState) ───────────
 
-    val sessionStateFlow get() = session.state
-    val eventFlow get() = session.events
-    val pendingConfirmationFlow get() = session.permissionManager.pendingConfirmation
+    public val sessionStateFlow: StateFlow<ChatSessionState>
+        get() = session.state
+    public val eventFlow: SharedFlow<KoogEvent>
+        get() = session.events
+    public val pendingConfirmationFlow: StateFlow<PendingConfirmation?>
+        get() = session.permissionManager.pendingConfirmation
 
 
     // ── Convenience accessors (use inside @Composable with collectAsState) ────
 
-    val context: KoogComposeContext get() = session.context
+    public val context: KoogComposeContext<*>
+        get() = session.context
 
     // ── Input actions ─────────────────────────────────────────────────────────
 
-    fun onInputChanged(text: String) {
+    public fun onInputChanged(text: String): Unit {
         inputText = text
     }
 
-    fun addAttachment(attachment: Attachment) {
+    public fun addAttachment(attachment: Attachment): Unit {
         attachments = attachments + attachment
     }
 
-    fun removeAttachment(attachment: Attachment) {
+    public fun removeAttachment(attachment: Attachment): Unit {
         attachments = attachments - attachment
     }
 
@@ -64,7 +73,7 @@ class ChatState internal constructor(
      * Send the current [inputText] and [attachments].
      * Clears both after sending.
      */
-    fun send() {
+    public fun send(): Unit {
         val text = inputText.trim()
         val current = attachments
         if (text.isBlank() && current.isEmpty()) return
@@ -77,21 +86,21 @@ class ChatState internal constructor(
      * Send a message programmatically — used by quick-reply chips,
      * tool response cards, proactive agents, etc.
      */
-    fun sendMessage(text: String, attachments: List<Attachment> = emptyList()) {
+    public fun sendMessage(text: String, attachments: List<Attachment> = emptyList()): Unit {
         session.send(text, attachments)
     }
 
-    fun cancel() = session.cancel()
-    fun regenerate() = session.regenerate()
-    fun clearHistory() = session.clearHistory()
+    public fun cancel(): Unit = session.cancel()
+    public fun regenerate(): Unit = session.regenerate()
+    public fun clearHistory(): Unit = session.clearHistory()
 
     // ── Permission actions ────────────────────────────────────────────────────
 
-    fun confirmToolExecution() {
+    public fun confirmToolExecution(): Unit {
         scope.launch { session.confirmPendingToolExecution() }
     }
 
-    fun denyToolExecution() {
+    public fun denyToolExecution(): Unit {
         scope.launch { session.denyPendingToolExecution() }
     }
 
@@ -101,7 +110,7 @@ class ChatState internal constructor(
      * Returns a new [ChatState] with additional session-level context
      * injected into the prompt stack. Conversation history is preserved.
      */
-    fun withContext(additionalContext: String): ChatState = ChatState(
+    public fun withContext(additionalContext: String): ChatState = ChatState(
         session = session.withContext(additionalContext),
         scope = scope
     )

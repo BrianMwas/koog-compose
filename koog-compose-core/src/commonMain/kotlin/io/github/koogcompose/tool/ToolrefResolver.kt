@@ -29,7 +29,7 @@ package io.github.koogcompose.tool
  * This gives the LLM precise knowledge of what tools it has and how to call them,
  * without you repeating tool docs in every instruction block.
  */
-object ToolRefResolver {
+public object ToolRefResolver {
 
     private val TOOL_REF_REGEX = Regex("""\[([A-Za-z][A-Za-z0-9_]*)]""")
 
@@ -39,7 +39,7 @@ object ToolRefResolver {
      * References to tools not found in the registry are left as-is with a
      * warning suffix so you catch mismatches at dev time.
      */
-    fun resolve(instructions: String, registry: ToolRegistry): String {
+    public fun resolve(instructions: String, registry: ToolRegistry): String {
         return TOOL_REF_REGEX.replace(instructions) { match ->
             val toolName = match.groupValues[1]
             val tool = registry.findBySimpleName(toolName)

@@ -7,7 +7,7 @@
 
 `koog-compose` is a developer-first Kotlin Multiplatform (KMP) runtime for building AI-driven features that orchestrate app logic, device capabilities, and UI from a single declarative DSL.
 
-Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between AI agent graphs and real app surfaces — giving you phase-aware conversations, plug-and-play persistence, and Material 3 UI components that work across Android, iOS, and Desktop.
+Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between AI agent graphs and real app surfaces — giving you typed shared state, phase-aware conversations, plug-and-play persistence, and Material 3 UI components that work across Android, iOS, and Desktop.
 
 ---
 
@@ -17,8 +17,9 @@ Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges 
 |---|---|
 | Wire LLM calls, tool execution, and UI state manually | Single `koogCompose { }` DSL handles the entire runtime |
 | Roll your own conversation state machine | Built-in `phases { }` with LLM-driven auto-transitions |
-| Build confirmation dialogs per feature | `AutoConfirmationHandler` with SAFE / SENSITIVE / CRITICAL tiers |
-| Reinvent session persistence each project | Drop-in `session-room` battery with your own DAO |
+| Pass state between tools and UI via globals or hacks | Typed `KoogStateStore<S>` flows from tools straight to Compose UI |
+| Build confirmation dialogs per feature | `AutoConfirmationHandler` with `SAFE` / `SENSITIVE` / `CRITICAL` tiers |
+| Reinvent session persistence each project | Drop-in `session-room` module with your own Room DAO |
 
 ---
 
@@ -34,8 +35,6 @@ io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed pers
 ---
 
 ## Installation
-
-Add to your `build.gradle.kts`:
 
 ```kotlin
 dependencies {
@@ -56,41 +55,117 @@ dependencies {
 
 ## Quick start
 
-### 1. Define your context
+### 1. Define your app state
+
+koog-compose is generic over your app state type. Tools update it, your Compose UI observes it — no globals, no manual wiring.
 
 ```kotlin
-val context = koogCompose {
-    // Choose your LLM provider
+data class AppState(
+    val userId: String,
+    val intent: Intent? = null,
+    val location: Coordinates? = null
+)
+```
+
+### 2. Build the context
+
+```kotlin
+val context = koogCompose<AppState> {
     provider {
         anthropic(apiKey = "your-key") {
             model = "claude-3-5-sonnet"
         }
     }
 
-    // Build a phase-aware conversation graph
+    // Typed initial state — S is inferred from here
+    initialState { AppState(userId = currentUserId) }
+
     phases {
         phase("greeting") {
             instructions { "Greet the user and offer to check their location." }
-            onCondition("user asks for location", targetPhase = "location_check")
         }
-
         phase("location_check") {
             instructions { "You now have access to the user's GPS coordinates." }
-            tool(GetCurrentLocationTool(androidContext)) // :device module
+        }
+        phase("confirm_location") {
+            instructions { "Confirm the detected location with the user." }
         }
     }
 }
 ```
 
-### 2. Add the Compose UI
+Platform-specific tools (e.g. GPS) are injected at construction time via your DI container — not inside the DSL:
+
+```kotlin
+// Construct your tool with the typed store
+val locationTool = GetCurrentLocationTool(
+    stateStore = context.stateStore!!,   // KoogStateStore<AppState>
+    locationClient = fusedLocationClient
+)
+```
+
+### 3. Write a stateful tool
+
+Extend `StatefulTool<S>` to read and mutate app state as a side effect of execution:
+
+```kotlin
+class GetCurrentLocationTool(
+    override val stateStore: KoogStateStore<AppState>,
+    private val locationClient: FusedLocationProviderClient
+) : StatefulTool<AppState>() {
+
+    override val name = "GetCurrentLocation"
+    override val description = "Fetch the device GPS coordinates"
+    override val permissionLevel = PermissionLevel.SENSITIVE  // triggers confirmation UI
+
+    override suspend fun execute(args: JsonObject): ToolResult {
+        val coords = locationClient.awaitLastLocation()
+        stateStore.update { it.copy(location = coords) }
+        return ToolResult.Success("Location acquired: $coords")
+    }
+}
+```
+
+### 4. Run it from a ViewModel
+
+```kotlin
+class ChatViewModel(
+    context: KoogComposeContext<AppState>,
+    executor: PromptExecutor
+) : ViewModel() {
+
+    val session = PhaseSession(
+        context   = context,
+        executor  = executor,
+        sessionId = "user_brian",
+        scope     = viewModelScope
+    )
+
+    // Agent/conversation concerns
+    val isRunning    = session.isRunning       // StateFlow<Boolean>
+    val lastResponse = session.lastResponse    // StateFlow<String?>
+    val currentPhase = session.currentPhase    // StateFlow<String>
+
+    // Domain/app state — updated by tools, observed by UI
+    val appState     = session.appState        // StateFlow<AppState>?
+}
+```
+
+### 5. Add the Compose UI
 
 ```kotlin
 @Composable
-fun ChatScreen() {
-    val chatState = rememberChatState(context)
+fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
+    val appState  by viewModel.appState.collectAsState()
+    val isRunning by viewModel.isRunning.collectAsState()
+
+    // appState drives your UI content (show location, intent resolved, etc.)
+    // isRunning drives your loading indicator
+
+    val chatState = rememberChatState(viewModel.session)
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Handles SAFE/SENSITIVE/CRITICAL confirmation tiers automatically
+    // Handles SAFE / SENSITIVE / CRITICAL confirmation tiers automatically
     ConfirmationObserver(
         chatState = chatState,
         handler = rememberAutoConfirmationHandler(snackbarHostState)
@@ -105,39 +180,67 @@ fun ChatScreen() {
 }
 ```
 
-### 3. Add persistent memory (optional)
+### 6. Add persistent memory (optional)
 
 ```kotlin
-// Plug your own Room DAO — koog-compose handles the session lifecycle
-val context = koogCompose {
-    provider { /* ... */ }
-    session {
-        store(RoomSessionStore(db.sessionDao()))
-    }
-}
+val session = PhaseSession(
+    context   = context,
+    executor  = executor,
+    sessionId = "user_brian",
+    store     = RoomSessionStore(db.sessionDao()),  // swap InMemory for Room
+    scope     = viewModelScope
+)
 ```
 
 ---
 
 ## Core concepts
 
+### Typed shared state
+
+`KoogStateStore<S>` is the single source of truth for your domain state. Tools update it via `stateStore.update { }`, and your Compose UI observes it via `session.appState` — a `StateFlow<S>`.
+
+```
+Tool executes
+  → stateStore.update { it.copy(location = coords) }
+      → StateFlow<AppState> emits
+          → Compose UI recomposes
+```
+
 ### Phases
 
 A `Phase` is a named state in your conversation graph. Each phase carries its own system instructions and tool access. The LLM transitions between phases automatically using generated transition tools — no manual routing code required.
 
 ```
-greeting ──[user asks for location]──► location_check ──[done]──► summary
+greeting ──► location_check ──► confirm_location ──► END
 ```
+
+Transitions are driven by the LLM reading the current `AppState` — you define the conditions, the agent decides when they're met.
 
 ### Security tiers
 
-Every tool action is assigned a risk tier. `AutoConfirmationHandler` maps tiers to the right UI friction:
+Every tool declares a `PermissionLevel`. `GuardrailEnforcer` intercepts all tool calls before execution and `AutoConfirmationHandler` maps tiers to the appropriate UI friction:
 
 | Tier | UI treatment | Example |
 |---|---|---|
-| `SAFE` | Silent / Snackbar | Reading calendar events |
-| `SENSITIVE` | Bottom sheet confirmation | Sending a message |
+| `SAFE` | Silent / Snackbar | Reading a preference |
+| `SENSITIVE` | Bottom sheet confirmation | Sending a message, reading location |
 | `CRITICAL` | Full-screen dialog | Deleting data, making a purchase |
+
+Guardrails also enforce rate limits and action allowlists at the config level:
+
+```kotlin
+koogCompose<AppState> {
+    // ...
+    config {
+        guardrails {
+            rateLimit("GetCurrentLocation", max = 3, per = 1.minutes)
+            allowIntent("android.intent.action.SEND")
+            maxScheduledJobs(2)
+        }
+    }
+}
+```
 
 ### Session store
 
@@ -145,13 +248,26 @@ Implement `SessionStore` to plug in any persistence backend:
 
 ```kotlin
 interface SessionStore {
-    suspend fun save(session: ChatSession)
-    suspend fun load(sessionId: String): ChatSession?
+    suspend fun load(sessionId: String): AgentSession?
+    suspend fun save(sessionId: String, session: AgentSession)
     suspend fun delete(sessionId: String)
+    suspend fun exists(sessionId: String): Boolean
 }
 ```
 
 The `:session-room` module provides a ready-made Room implementation.
+
+### Stateless sessions
+
+If you don't need shared state, omit `initialState { }` and use the `Unit` overload:
+
+```kotlin
+val context = koogCompose {
+    provider { anthropic(apiKey = "...") { model = "claude-3-5-sonnet" } }
+    phases { /* ... */ }
+}
+// context is KoogComposeContext<Unit>
+```
 
 ---
 
@@ -160,6 +276,7 @@ The `:session-room` module provides a ready-made Room implementation.
 | Feature | Android | iOS | Desktop (JVM) |
 |---|---|---|---|
 | Core DSL & phases | ✅ | ✅ | ✅ |
+| Typed shared state | ✅ | ✅ | ✅ |
 | Compose UI | ✅ | ✅ | ✅ |
 | Room session store | ✅ | ✅ | — |
 | Device tools (location) | ✅ | 🔜 v1.1 | — |
@@ -203,8 +320,8 @@ The `:session-room` module provides a ready-made Room implementation.
 
 Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 
-- Bug reports and feature requests → [GitHub Issues](https://github.com/YOUR_USERNAME/koog-compose/issues)
-- Questions → [GitHub Discussions](https://github.com/YOUR_USERNAME/koog-compose/discussions)
+- Bug reports and feature requests → [GitHub Issues](https://github.com/brianmwas/koog-compose/issues)
+- Questions → [GitHub Discussions](https://github.com/brianmwas/koog-compose/discussions)
 
 ---
 

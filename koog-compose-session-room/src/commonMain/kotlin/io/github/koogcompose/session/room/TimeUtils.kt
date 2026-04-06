@@ -1,6 +1,6 @@
 package io.github.koogcompose.session.room
 
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 
 internal fun currentTimeMillis(): Long =
     Clock.System.now().toEpochMilliseconds()

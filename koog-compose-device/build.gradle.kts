@@ -15,9 +15,6 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
-    
-    iosArm64()
-    iosSimulatorArm64()
 
     sourceSets {
         commonMain.dependencies {
@@ -30,14 +27,14 @@ kotlin {
             implementation(libs.kotlinx.coroutines.test)
             implementation(project(":koog-compose-testing"))
         }
-        androidMain.dependencies {
-            implementation(libs.play.services.location)
-            implementation(libs.androidx.core.ktx)
-            implementation(libs.androidx.work.runtime.ktx)
-        }
-        
-        val iosMain by creating {
-            dependsOn(commonMain.get())
+        val androidMain by getting {
+            kotlin.exclude("io/github/koogcompose/device/background/**")
+            kotlin.exclude("io/github/koogcompose/device/session/RedisSessionStore.kt")
+
+            dependencies {
+                implementation(libs.play.services.location)
+                implementation(libs.androidx.core.ktx)
+            }
         }
     }
 }

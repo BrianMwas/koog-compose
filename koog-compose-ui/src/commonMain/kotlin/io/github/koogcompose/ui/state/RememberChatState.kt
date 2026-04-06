@@ -37,9 +37,9 @@ import io.github.koogcompose.session.KoogComposeContext
  * ```
  */
 @Composable
-fun rememberChatState(
+public fun rememberChatState(
     provider: AIProvider,
-    context: KoogComposeContext,
+    context: KoogComposeContext<*>,
     userId: String? = null
 ): ChatState {
     val scope = rememberCoroutineScope()
@@ -64,19 +64,19 @@ fun rememberChatState(
 }
 
 @Composable
-fun rememberChatState(
+public fun rememberChatState(
     provider: AIProvider,
     userId: String? = null,
-    context: KoogComposeContext.Builder.() -> Unit
+    context: KoogComposeContext.Builder<Unit>.() -> Unit
 ): ChatState = rememberChatState(
     provider = provider,
-    context = KoogComposeContext(context),
+    context = KoogComposeContext<Unit>(context),
     userId = userId
 )
 
 @Composable
-fun rememberChatState(
-    context: KoogComposeContext,
+public fun rememberChatState(
+    context: KoogComposeContext<*>,
     userId: String? = null
 ): ChatState {
     val provider = remember(context) { context.createProvider() }
@@ -88,11 +88,11 @@ fun rememberChatState(
 }
 
 @Composable
-fun rememberChatState(
+public fun rememberChatState(
     userId: String? = null,
-    context: KoogComposeContext.Builder.() -> Unit
+    context: KoogComposeContext.Builder<Unit>.() -> Unit
 ): ChatState {
-    val resolvedContext = remember(context) { KoogComposeContext(context) }
+    val resolvedContext = remember(context) { KoogComposeContext<Unit>(context) }
     return rememberChatState(
         context = resolvedContext,
         userId = userId

@@ -1,18 +1,20 @@
 package io.github.koogcompose.event
 
-import io.github.koogcompose.session.AIResponseChunk
 import kotlinx.serialization.json.JsonObject
+import kotlin.time.Clock
 
 /**
  * A tracing sink that outputs events to a platform-specific log.
  */
-interface TracingSink : KoogEventHandler
+public interface TracingSink : KoogEventHandler
 
 /**
  * A basic implementation of [TracingSink] that logs events to the console/logcat.
  */
-class ConsoleTracingSink(private val tag: String = "KoogCompose") : TracingSink {
-    override fun onEvent(event: KoogEvent) {
+public class ConsoleTracingSink(
+    private val tag: String = "KoogCompose"
+) : TracingSink {
+    override fun onEvent(event: KoogEvent): Unit {
         val message = when (event) {
             is KoogEvent.TurnStarted -> "Turn Started: ${event.turnId} (${event.phaseName ?: "default"})"
             is KoogEvent.PhaseTransitioned -> "Phase Transition: ${event.fromPhaseName} -> ${event.toPhaseName}"
@@ -35,17 +37,17 @@ class ConsoleTracingSink(private val tag: String = "KoogCompose") : TracingSink 
 /**
  * Orchestration engine for running structured routines (graphs) on top of Koog.
  */
-class RoutineOrchestrator(
+public class RoutineOrchestrator(
     private val eventBus: KoogEventBus
 ) {
-    suspend fun runRoutine(routineId: String, input: JsonObject) {
+    public suspend fun runRoutine(routineId: String, input: JsonObject): Unit {
+        input.size
         dispatch(KoogEvent.RoutineStarted(currentTimeMs(), null, routineId))
-        // Actual graph execution logic will go here in the next pass
     }
 
-    private fun dispatch(event: KoogEvent) {
+    private fun dispatch(event: KoogEvent): Unit {
         eventBus.dispatch(event)
     }
 
-    private fun currentTimeMs(): Long = kotlin.time.TimeSource.Monotonic.markNow().elapsedNow().inWholeMilliseconds
+    private fun currentTimeMs(): Long = Clock.System.now().toEpochMilliseconds()
 }

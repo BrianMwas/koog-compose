@@ -82,14 +82,14 @@ import kotlinx.coroutines.launch
  * }
  * ```
  */
-interface ConfirmationHandler {
+public interface ConfirmationHandler {
     /**
      * Called when a SENSITIVE or CRITICAL tool requires user approval.
      *
      * @param pending Details about the tool call requesting confirmation.
      * @return true if the user approved execution, false if denied.
      */
-    suspend fun requestConfirmation(pending: PendingConfirmation): Boolean
+    public suspend fun requestConfirmation(pending: PendingConfirmation): Boolean
 }
 
 /**
@@ -117,10 +117,10 @@ interface ConfirmationHandler {
  * ```
  */
 @Composable
-fun ConfirmationObserver(
+public fun ConfirmationObserver(
     chatState: ChatState,
     handler: ConfirmationHandler
-) {
+): Unit {
     val scope = rememberCoroutineScope()
     val pending by chatState.pendingConfirmationFlow.collectAsState()
 
@@ -149,7 +149,7 @@ fun ConfirmationObserver(
  * ```
  */
 @Composable
-fun rememberSnackbarConfirmationHandler(
+public fun rememberSnackbarConfirmationHandler(
     snackbarHostState: SnackbarHostState,
     actionLabel: String = "Allow",
     criticalActionLabel: String = "Confirm"
@@ -181,7 +181,7 @@ fun rememberSnackbarConfirmationHandler(
  * ```
  */
 @Composable
-fun rememberDialogConfirmationHandler(): ConfirmationHandler {
+public fun rememberDialogConfirmationHandler(): ConfirmationHandler {
     var pendingState by remember { mutableStateOf<PendingConfirmation?>(null) }
     var resolveCallback by remember { mutableStateOf<((Boolean) -> Unit)?>(null) }
 

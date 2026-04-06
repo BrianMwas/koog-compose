@@ -1,6 +1,5 @@
 package io.github.koogcompose.session
 
-
 import kotlinx.serialization.Serializable
 
 /**
@@ -10,10 +9,12 @@ import kotlinx.serialization.Serializable
  * where it left off — full LLM message history, current phase, and any
  * app-level context variables written during the session.
  *
- * koog-compose ships three implementations:
+ * koog-compose currently ships two maintained implementations:
  *  - [InMemorySessionStore]  — default, no setup required, lost on process death
- *  - [RedisSessionStore]     — for server-side or multi-device sync (koog-compose-device)
- *  - [RoomSessionStore]      — for persistent on-device storage (koog-compose-device)
+ *  - [io.github.koogcompose.session.room.RoomSessionStore] — for persistent on-device storage
+ *
+ * For server-side or multi-device sync, provide a custom [SessionStore]
+ * implementation backed by your own service or database.
  *
  * Custom implementation:
  * ```kotlin
@@ -25,26 +26,26 @@ import kotlinx.serialization.Serializable
  * }
  * ```
  */
-interface SessionStore {
+public interface SessionStore {
     /**
      * Loads an existing session. Returns null if no session exists for [sessionId].
      */
-    suspend fun load(sessionId: String): AgentSession?
+    public suspend fun load(sessionId: String): AgentSession?
 
     /**
      * Persists the session. Overwrites any existing session with the same [sessionId].
      */
-    suspend fun save(sessionId: String, session: AgentSession)
+    public suspend fun save(sessionId: String, session: AgentSession): Unit
 
     /**
      * Deletes a session. No-op if it doesn't exist.
      */
-    suspend fun delete(sessionId: String)
+    public suspend fun delete(sessionId: String): Unit
 
     /**
      * Returns true if a session exists for [sessionId].
      */
-    suspend fun exists(sessionId: String): Boolean
+    public suspend fun exists(sessionId: String): Boolean
 }
 
 // ── AgentSession ───────────────────────────────────────────────────────────────
@@ -62,13 +63,13 @@ interface SessionStore {
  * @param updatedAt Unix timestamp (ms) of the last save.
  */
 @Serializable
-data class AgentSession(
+public data class AgentSession(
     val sessionId: String,
     val currentPhaseName: String,
     val messageHistory: List<SessionMessage>,
     val contextVars: Map<String, String> = emptyMap(),
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val createdAt: Long = currentTimeMs(),
+    val updatedAt: Long = currentTimeMs()
 )
 
 /**
@@ -83,7 +84,7 @@ data class AgentSession(
  * @param toolCallId Matches a tool_call to its tool_result.
  */
 @Serializable
-data class SessionMessage(
+public data class SessionMessage(
     val role: String,
     val content: String,
     val toolName: String? = null,

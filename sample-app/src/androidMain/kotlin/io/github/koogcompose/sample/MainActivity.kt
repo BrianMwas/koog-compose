@@ -194,25 +194,23 @@ private fun KoogEvent.describe(): String = when (this) {
     is KoogEvent.TurnCompleted -> "Turn completed"
     is KoogEvent.TurnFailed -> "Turn failed"
     is KoogEvent.TurnCancelled -> "Turn cancelled"
+    else -> "Event"
 }
 
 @Composable
 private fun rememberSampleChatState(
-    realContext: KoogComposeContext?,
-    demoContext: KoogComposeContext,
+    realContext: KoogComposeContext<Unit>?,
+    demoContext: KoogComposeContext<Unit>,
     scriptedProvider: ScriptedAIProvider
 ): ChatState {
     return if (realContext != null) {
         rememberChatState(context = realContext)
     } else {
-        rememberChatState(
-            provider = scriptedProvider,
-            context = demoContext
-        )
+        rememberChatState(provider = scriptedProvider, context = demoContext)
     }
 }
 
-private fun buildDemoContext(context: Context): KoogComposeContext = koogCompose {
+private fun buildDemoContext(context: Context): KoogComposeContext<Unit> = koogCompose {
     provider {
         ollama(model = "demo-local")
     }
@@ -227,7 +225,7 @@ private fun buildDemoContext(context: Context): KoogComposeContext = koogCompose
     }
 }
 
-private fun buildRealContext(context: Context): KoogComposeContext? {
+private fun buildRealContext(context: Context): KoogComposeContext<Unit>? {
     val provider = BuildConfig.SAMPLE_PROVIDER.trim().lowercase()
     if (provider.isBlank()) return null
 

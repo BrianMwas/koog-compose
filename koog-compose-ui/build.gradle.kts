@@ -22,10 +22,6 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
-    
-    // CMP parity: add iOS targets
-    iosArm64()
-    iosSimulatorArm64()
 
     sourceSets {
         commonMain.dependencies {
@@ -50,11 +46,7 @@ kotlin {
         androidMain.dependencies {
             implementation(libs.androidx.activity.compose)
         }
-        
-        val iosMain by creating {
-            dependsOn(commonMain.get())
-        }
-        
+
         val desktopMain by getting {
             dependencies {
                 implementation(compose.desktop.currentOs)

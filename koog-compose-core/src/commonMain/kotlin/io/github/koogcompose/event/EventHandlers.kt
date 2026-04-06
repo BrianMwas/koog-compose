@@ -1,9 +1,15 @@
 package io.github.koogcompose.event
 
-class EventHandlers private constructor(
+/**
+ * Registry of coroutine-based event handlers declared through the koog-compose DSL.
+ */
+public class EventHandlers private constructor(
     private val handlers: List<suspend (KoogEvent) -> Unit>
 ) {
-    suspend fun dispatch(event: KoogEvent) {
+    /**
+     * Dispatches [event] to every registered handler.
+     */
+    public suspend fun dispatch(event: KoogEvent): Unit {
         handlers.forEach { handler ->
             try {
                 handler(event)
@@ -13,46 +19,49 @@ class EventHandlers private constructor(
         }
     }
 
-    class Builder {
+    /**
+     * Mutable builder used by `events { ... }`.
+     */
+    public class Builder {
         private val handlers = mutableListOf<suspend (KoogEvent) -> Unit>()
 
-        fun onEvent(handler: suspend (KoogEvent) -> Unit) {
+        public fun onEvent(handler: suspend (KoogEvent) -> Unit): Unit {
             handlers += handler
         }
 
-        fun onTurnStarted(handler: suspend (KoogEvent.TurnStarted) -> Unit) {
+        public fun onTurnStarted(handler: suspend (KoogEvent.TurnStarted) -> Unit): Unit {
             onTyped(handler)
         }
 
-        fun onTurnCompleted(handler: suspend (KoogEvent.TurnCompleted) -> Unit) {
+        public fun onTurnCompleted(handler: suspend (KoogEvent.TurnCompleted) -> Unit): Unit {
             onTyped(handler)
         }
 
-        fun onTurnFailed(handler: suspend (KoogEvent.TurnFailed) -> Unit) {
+        public fun onTurnFailed(handler: suspend (KoogEvent.TurnFailed) -> Unit): Unit {
             onTyped(handler)
         }
 
-        fun onPhaseTransitioned(handler: suspend (KoogEvent.PhaseTransitioned) -> Unit) {
+        public fun onPhaseTransitioned(handler: suspend (KoogEvent.PhaseTransitioned) -> Unit): Unit {
             onTyped(handler)
         }
 
-        fun onToolCallRequested(handler: suspend (KoogEvent.ToolCallRequested) -> Unit) {
+        public fun onToolCallRequested(handler: suspend (KoogEvent.ToolCallRequested) -> Unit): Unit {
             onTyped(handler)
         }
 
-        fun onToolConfirmationRequested(handler: suspend (KoogEvent.ToolConfirmationRequested) -> Unit) {
+        public fun onToolConfirmationRequested(handler: suspend (KoogEvent.ToolConfirmationRequested) -> Unit): Unit {
             onTyped(handler)
         }
 
-        fun onToolExecutionCompleted(handler: suspend (KoogEvent.ToolExecutionCompleted) -> Unit) {
+        public fun onToolExecutionCompleted(handler: suspend (KoogEvent.ToolExecutionCompleted) -> Unit): Unit {
             onTyped(handler)
         }
 
-        fun onProviderChunkReceived(handler: suspend (KoogEvent.ProviderChunkReceived) -> Unit) {
+        public fun onProviderChunkReceived(handler: suspend (KoogEvent.ProviderChunkReceived) -> Unit): Unit {
             onTyped(handler)
         }
 
-        fun build(): EventHandlers = EventHandlers(handlers.toList())
+        public fun build(): EventHandlers = EventHandlers(handlers.toList())
 
         private inline fun <reified T : KoogEvent> onTyped(noinline handler: suspend (T) -> Unit) {
             handlers += { event ->
@@ -63,10 +72,10 @@ class EventHandlers private constructor(
         }
     }
 
-    companion object {
-        val Empty: EventHandlers = EventHandlers(emptyList())
+    public companion object {
+        public val Empty: EventHandlers = EventHandlers(emptyList())
 
-        operator fun invoke(block: Builder.() -> Unit): EventHandlers =
+        public operator fun invoke(block: Builder.() -> Unit): EventHandlers =
             Builder().apply(block).build()
     }
 }
