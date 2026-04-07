@@ -1,10 +1,9 @@
 package io.github.koogcompose.phase
 
-
 import io.github.koogcompose.session.KoogAgentDefinition
 import io.github.koogcompose.tool.HandoffBuilder
 import io.github.koogcompose.tool.HandoffTool
-import io.github.koogcompose.session.SessionRunner
+import io.github.koogcompose.tool.handoff as createHandoffTool
 
 /**
  * Registers a [HandoffTool] in this phase's tool registry.
@@ -38,9 +37,13 @@ import io.github.koogcompose.session.SessionRunner
 public fun PhaseBuilder.handoff(
     target: KoogAgentDefinition,
     description: () -> String,
-): Unit = tool(handoff(target, description))
+): Unit {
+    tool(createHandoffTool(target, description))
+}
 
 public fun PhaseBuilder.handoff(
     target: KoogAgentDefinition,
     block: HandoffBuilder.() -> Unit,
-): Unit = tool(handoff(target, block))
+): Unit {
+    tool(createHandoffTool(target, block))
+}

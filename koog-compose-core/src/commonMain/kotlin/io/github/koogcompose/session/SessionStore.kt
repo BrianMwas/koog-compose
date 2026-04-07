@@ -11,7 +11,7 @@ import kotlinx.serialization.Serializable
  *
  * koog-compose currently ships two maintained implementations:
  *  - [InMemorySessionStore]  — default, no setup required, lost on process death
- *  - [io.github.koogcompose.session.room.RoomSessionStore] — for persistent on-device storage
+ *  - [RoomSessionStore] — for persistent on-device storage
  *
  * For server-side or multi-device sync, provide a custom [SessionStore]
  * implementation backed by your own service or database.

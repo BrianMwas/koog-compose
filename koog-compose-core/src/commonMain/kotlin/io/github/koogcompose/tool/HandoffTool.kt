@@ -1,6 +1,5 @@
 package io.github.koogcompose.tool
 
-
 import io.github.koogcompose.session.KoogAgentDefinition
 import io.github.koogcompose.session.KoogStateStore
 import io.github.koogcompose.tool.PermissionLevel
@@ -27,22 +26,19 @@ import kotlinx.serialization.json.JsonObject
  */
 public class HandoffTool(
     public val targetAgentName: String,
-    public val description: String,
+    override val description: String,
     public val continueHistory: Boolean = true,
     public val onHandoff: (HandoffContext.() -> Unit)? = null,
 ) : SecureTool {
 
     override val name: String = handoffToolName(targetAgentName)
 
-    override val description: String
-        get() = this.description
-
     override val permissionLevel: PermissionLevel = PermissionLevel.SAFE
 
     override val parametersSchema: JsonObject? = null
 
     override suspend fun execute(args: JsonObject): ToolResult =
-    // Execution is intercepted by SessionRunner before reaching here.
+        // Execution is intercepted by SessionRunner before reaching here.
         // This fallback fires only if the tool is called outside a session context.
         ToolResult.Success("Handing off to $targetAgentName...")
 }
