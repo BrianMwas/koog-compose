@@ -2,7 +2,7 @@
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.brianmwas.koog_compose/koog-compose-core?label=Maven%20Central)](https://central.sonatype.com/search?q=io.github.brianmwas.koog_compose)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Kotlin](https://img.shields.io/badge/kotlin-2.1.0-purple.svg)](https://kotlinlang.org)
+[![Kotlin](https://img.shields.io/badge/kotlin-2.3.20-purple.svg)](https://kotlinlang.org)
 [![KMP](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen.svg)](https://www.jetbrains.com/kotlin-multiplatform/)
 
 `koog-compose` is a developer-first Kotlin Multiplatform (KMP) runtime for building AI-driven features that orchestrate app logic, device capabilities, and UI from a single declarative DSL.
@@ -42,10 +42,10 @@ io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed pers
 
 ```kotlin
 dependencies {
-    implementation("io.github.brianmwas.koog_compose:koog-compose-core:0.1.2")
-    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:0.1.2")            // Compose UI components
-    implementation("io.github.brianmwas.koog_compose:koog-compose-device:0.1.2")        // Android/iOS device tools
-    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:0.1.2")  // Persistent memory via Room
+    implementation("io.github.brianmwas.koog_compose:koog-compose-core:0.1.4")
+    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:0.1.4")            // Compose UI components
+    implementation("io.github.brianmwas.koog_compose:koog-compose-device:0.1.4")        // Android/iOS device tools
+    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:0.1.4")  // Persistent memory via Room
 }
 ```
 
@@ -248,6 +248,45 @@ val session = PhaseSession(
 )
 ```
  
+---
+
+## How it works
+
+koog-compose is built as a thin, opinionated layer over [JetBrains Koog](https://github.com/JetBrains/koog). Every `koogCompose { }` block produces a live `AIAgent` with three Koog features installed:
+
+| Feature | Purpose |
+|---|---|
+| **ChatMemory** | Owns LLM conversation history. Loads from your `SessionStore` before each turn, saves after. Replaces manual `messageHistory` lists. |
+| **StreamingFeature** | Intercepts `TextDelta` frames from Koog's LLM pipeline and emits them as `Flow<String>` for real-time UI updates. |
+| **EventHandler** | Maps Koog's native lifecycle callbacks (`onToolCallStarting`, `onAgentCompleted`, etc.) into koog-compose's typed `KoogEvent` sealed hierarchy. |
+
+Phase subgraphs are built from your `phases { }` DSL into Koog's `AIAgentGraphStrategy`. Each phase becomes a subgraph with `nodeLLMRequest` → `nodeExecuteTool` → `nodeLLMSendToolResult` nodes, with optional `nodeLLMCompressHistory` between them. Phase transitions are captured as edges — the LLM triggers them by calling generated transition tools.
+
+```
+koogCompose { } DSL
+       │
+       ▼
+┌─────────────────────────┐
+│  KoogComposeContext     │  ← provider, phases, tools, config, events
+└────────┬────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│  PhaseAwareAgent        │  ← builds AIAgent with 3 features installed
+│  • ChatMemory           │     (ChatHistoryProvider → your SessionStore)
+│  • StreamingFeature     │     (TextDelta → responseStream Flow)
+│  • EventHandler         │     (Koog callbacks → KoogEvent dispatch)
+└────────┬────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│  PhaseStrategyBuilder   │  ← phases → subgraphs with compression nodes
+└────────┬────────────────┘
+         │
+         ▼
+   Koog AIAgent runs ──► LLM calls, tool execution, phase transitions
+```
+
 ---
 
 ## Core concepts
@@ -463,13 +502,14 @@ val context = koogCompose {
 ```bash
 # Run common (KMP) tests
 ./gradlew :koog-compose-core:desktopTest
- 
+
 # Run Android instrumented tests
 ./gradlew :koog-compose-core:connectedAndroidTest
- 
-# Build the sample app
-./gradlew :sample-app:assembleDebug
- 
+
+# Run the CMP sample app (Android or iOS)
+./gradlew :sample-app:assembleDebug        # Android
+./gradlew :sample-app:assembleDebugIosSim  # iOS Simulator
+
 # Generate KDoc
 ./gradlew dokkaHtml
 ```
@@ -503,7 +543,7 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
 ## License
 
 ```
-Copyright 2025 Brian Mwangi
+Copyright 2025-2026 Brian Mwangi
  
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
