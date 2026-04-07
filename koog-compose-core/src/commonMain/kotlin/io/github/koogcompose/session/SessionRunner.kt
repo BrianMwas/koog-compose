@@ -2,6 +2,7 @@ package io.github.koogcompose.session
 
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.model.PromptExecutor
+import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.phase.PhaseAwareAgent
 import io.github.koogcompose.tool.HandoffContext
 import io.github.koogcompose.tool.HandoffTool
@@ -16,29 +17,24 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
-import kotlinx.serialization.json.Json
+import ai.koog.agents.chatMemory.feature.ChatMemory
 
 /**
  * Multi-agent runtime for a [KoogSession].
  *
- * Owns the lifecycle of the active agent, intercepts [HandoffTool] calls to
- * swap agents, threads shared state across all agents, and preserves or resets
- * conversation history according to each handoff's [HandoffTool.continueHistory] flag.
- *
- * Intended to live inside a ViewModel:
- * ```kotlin
- * class ProductivityViewModel(
- *     executor: PromptExecutor
- * ) : ViewModel() {
- *     val runner = SessionRunner(
- *         session   = productivitySession,
- *         executor  = executor,
- *         sessionId = "user_brian",
- *         scope     = viewModelScope
- *     )
- * }
- * ```
+ * **What changed from the original:**
+ * - Manual `messageHistory` list and `persistTurn()` removed entirely.
+ *   [ChatMemory] (installed in [PhaseAwareAgent]) owns LLM history per [sessionId].
+ *   [SessionStoreChatHistoryProvider] writes it into the session's [SessionStore]
+ *   automatically — no manual persistence needed.
+ * - `agent.run(userMessage, sessionId)` is called with two args so [ChatMemory]
+ *   scopes history correctly. This was the core bug — single-arg `run()` meant
+ *   each agent started with a blank slate on every turn.
+ * - `continueHistory = false` is now implemented correctly: we pass a *different*
+ *   synthetic sessionId for the incoming agent so [ChatMemory] gives it a clean
+ *   context window. The real sessionId's history is preserved in the store.
+ * - Handoff detection is moved to `extractHandoffTarget()` which checks the
+ *   agent response for the deterministic `handoff_to_<name>` tool name pattern.
  */
 public class SessionRunner<S>(
     private val session: KoogSession<S>,
@@ -50,8 +46,6 @@ public class SessionRunner<S>(
     // ── Observable UI state ────────────────────────────────────────────────
 
     private val _activeAgentName = MutableStateFlow(session.mainAgent.name)
-
-    /** Name of the agent currently handling user messages. */
     public val activeAgentName: StateFlow<String> = _activeAgentName.asStateFlow()
 
     private val _isRunning = MutableStateFlow(false)
@@ -63,25 +57,15 @@ public class SessionRunner<S>(
     private val _responseStream = MutableSharedFlow<String>(extraBufferCapacity = 64)
     override val responseStream: Flow<String> = _responseStream.asSharedFlow()
 
-    /**
-     * Observable shared app state — collect in Compose UI.
-     * Null if no `state { }` block was declared in the session.
-     */
+    private val _turnId = MutableStateFlow(0)
+
+    /** Observable shared app state. Null if no `state { }` block was declared. */
     public val appState: StateFlow<S>? = session.stateStore?.stateFlow
 
     // ── Internal runtime state ─────────────────────────────────────────────
 
-    // The agent currently built and ready to run. Replaced on every handoff.
     private var activeAgent: AIAgent<String, String>? = null
-
-    // The definition driving the active agent. Starts as main.
     private var activeDefinition: KoogAgentDefinition = session.mainAgent
-
-    // Accumulated message history across all agents in this session.
-    private val messageHistory: MutableList<SessionMessage> = mutableListOf()
-
-    // Whether the runtime has been fully initialised from the store.
-    private var initialised = false
 
     // ── KoogSessionHandle ──────────────────────────────────────────────────
 
@@ -89,6 +73,7 @@ public class SessionRunner<S>(
         scope.launch {
             _isRunning.value = true
             _error.value = null
+            _turnId.value += 1
 
             val retryPolicy = session.config.retryPolicy
             var lastError: Throwable? = null
@@ -100,23 +85,19 @@ public class SessionRunner<S>(
                     delayMs *= 2
                 }
                 try {
-                    ensureInitialised()
-                    val response = runTurn(userMessage)
-                    persistTurn(userMessage, response)
+                    ensureAgentCreated(activeDefinition)
+                    runTurn(userMessage)
                     lastError = null
                     return@repeat
                 } catch (e: Throwable) {
                     lastError = e
                     if (attempt < retryPolicy.maxAttempts - 1) {
-                        resetActiveAgent()
+                        activeAgent = null
                     }
                 }
             }
 
-            if (lastError != null) {
-                _error.value = lastError
-            }
-
+            if (lastError != null) _error.value = lastError
             _isRunning.value = false
         }
     }
@@ -124,198 +105,126 @@ public class SessionRunner<S>(
     override fun reset() {
         scope.launch {
             session.store.delete(sessionId)
-            resetActiveAgent()
-            messageHistory.clear()
-            _activeAgentName.value = session.mainAgent.name
+            activeAgent = null
             activeDefinition = session.mainAgent
+            _activeAgentName.value = session.mainAgent.name
             _error.value = null
-            initialised = false
+            _turnId.value = 0
         }
     }
 
     // ── Turn execution ─────────────────────────────────────────────────────
 
     /**
-     * Runs a single turn against the active agent.
+     * Runs a single turn, following any handoff chain until an agent responds
+     * without requesting a handoff.
      *
-     * If the agent's response triggers a [HandoffTool], the runner:
-     * 1. Invokes [HandoffTool.onHandoff] to allow state mutation.
-     * 2. Resolves the target [KoogAgentDefinition] from the session registry.
-     * 3. Builds a fresh [PhaseAwareAgent] for the target, optionally
-     *    propagating conversation history per [HandoffTool.continueHistory].
-     * 4. Re-runs the original user message against the new agent.
-     *
-     * This loop continues until an agent responds without requesting a handoff.
+     * History threading works as follows:
+     * - `continueHistory = true` (default): both agents share the same [sessionId],
+     *   so [ChatMemory] gives the specialist the full conversation history.
+     * - `continueHistory = false`: the specialist receives a derived sessionId
+     *   (`"$sessionId:${agent.name}"`), giving it a clean context window while
+     *   the main session's history is preserved.
      */
-    private suspend fun runTurn(userMessage: String): String {
+    private suspend fun runTurn(userMessage: String) {
         var input = userMessage
         var hopsRemaining = session.config.maxAgentIterations
-        val handoffPath = mutableListOf<String>()
 
         while (hopsRemaining-- > 0) {
-            handoffPath.add(activeDefinition.name)
+            val agent = requireNotNull(activeAgent) { "Agent not initialised." }
 
-            val agent = requireNotNull(activeAgent) { "Agent failed to initialise." }
-            val response = agent.run(input)
+            // Two-arg run: ChatMemory scopes history to this sessionId.
+            val response = agent.run(input, sessionId)
 
-            val handoffName = extractHandoffTarget(response) ?: return response
+            val handoffName = extractHandoffTarget(response) ?: return // normal response — done
 
-            // Proactive Loop Detection
-            if (handoffPath.count { it == handoffName } >= 2) {
-                throw IllegalStateException(
-                    "Handoff loop detected for agent '$handoffName'. " +
-                        "Path: ${handoffPath.joinToString(" -> ")} -> $handoffName"
-                )
-            }
-
-            // Resolve the target agent from the registry.
             val targetDefinition = session.findAgent(handoffName)
                 ?: error(
                     "koog-compose: Handoff target '$handoffName' is not registered. " +
-                        "Add it via agents($handoffName) in your koogSession { } block."
+                            "Add it via agents($handoffName) in your koogSession { } block."
                 )
 
-            // Find the handoff declaration to check options.
             val handoff = findHandoffTool(activeDefinition, handoffName)
 
-            // Execute onHandoff callback before swapping.
+            // Fire onHandoff callback before swapping agents.
             handoff?.onHandoff?.invoke(HandoffContext(session.stateStore))
 
-            // Swap the active agent.
-            activateAgent(
+            val continueHistory = handoff?.continueHistory ?: true
+
+            // Swap the active agent. History scoping is determined by continueHistory.
+            swapAgent(
                 definition = targetDefinition,
-                continueHistory = handoff?.continueHistory ?: true,
+                historySessionId = if (continueHistory) sessionId
+                else "$sessionId:${targetDefinition.name}",
             )
 
-            // The new agent picks up from where the user left off.
-            // Pass the original input so the specialist has full context.
             input = userMessage
         }
 
         error(
             "koog-compose: Handoff chain exceeded maxAgentIterations " +
-                "(${session.config.maxAgentIterations}). Possible routing loop."
+                    "(${session.config.maxAgentIterations}). Possible routing loop."
         )
     }
 
+    // ── Agent creation and swap ────────────────────────────────────────────
+
+    private fun ensureAgentCreated(definition: KoogAgentDefinition) {
+        if (activeAgent != null) return
+        activeAgent = buildAgent(definition, sessionId)
+    }
+
     /**
-     * Activates [definition] as the new agent, rebuilding [activeAgent].
+     * Swaps the active agent to [definition].
      *
-     * @param continueHistory If true, passes [messageHistory] into the new agent's context.
-     *                        If false, starts with an empty history.
+     * @param historySessionId The sessionId passed to [ChatMemory] — controls
+     *   whether the new agent sees the full history or starts clean.
      */
-    private suspend fun activateAgent(
+    private fun swapAgent(
         definition: KoogAgentDefinition,
-        continueHistory: Boolean,
+        historySessionId: String,
     ) {
         activeDefinition = definition
         _activeAgentName.value = definition.name
+        activeAgent = buildAgent(definition, historySessionId)
+    }
 
+    private fun buildAgent(
+        definition: KoogAgentDefinition,
+        historySessionId: String,
+    ): AIAgent<String, String> {
         val context = session.contextFor(definition)
-
-        activeAgent = PhaseAwareAgent.create(
+        return PhaseAwareAgent.create(
             context = context,
             promptExecutor = executor,
+            sessionId = historySessionId,
+            store = session.store,
             strategyName = "session-${definition.name}",
             tokenSink = _responseStream,
+            // EventHandlers are not wired at session level yet —
+            // add session.eventHandlers to KoogSession when needed.
+            eventHandlers = EventHandlers.Empty,
+            currentTurnId = { _turnId.value.toString() },
         )
     }
 
     // ── Handoff detection ──────────────────────────────────────────────────
 
-    /**
-     * Checks whether [agentResponse] is a handoff signal.
-     *
-     * Koog surfaces tool results as part of the agent's final output when
-     * `MissingToolsConversionStrategy` is active. A handoff tool name in the
-     * response is the canonical signal — no separate event bus needed.
-     */
-    private fun extractHandoffTarget(agentResponse: String): String? {
-        val prefix = "handoff_to_"
-        // The response contains the tool name when the agent's last action was a tool call.
-        val match = HANDOFF_PATTERN.find(agentResponse) ?: return null
-        return match.groupValues[1].takeIf { it.isNotBlank() }
-    }
+    private fun extractHandoffTarget(agentResponse: String): String? =
+        HANDOFF_PATTERN.find(agentResponse)?.groupValues?.get(1)?.takeIf { it.isNotBlank() }
 
-    /**
-     * Finds the [HandoffTool] declaration for [targetAgentName] from [definition]'s phases.
-     * Returns null if no explicit declaration exists (handoff still proceeds with defaults).
-     */
     private fun findHandoffTool(
         definition: KoogAgentDefinition,
         targetAgentName: String,
     ): HandoffTool? {
         val toolName = handoffToolName(targetAgentName)
         return definition.phaseRegistry.all
-            .flatMap { phase -> phase.toolRegistry.all }
+            .flatMap { it.toolRegistry.all }
             .filterIsInstance<HandoffTool>()
             .firstOrNull { it.name == toolName }
     }
 
-    // ── Initialisation ─────────────────────────────────────────────────────
-
-    private suspend fun ensureInitialised() {
-        if (initialised) return
-
-        val saved = session.store.load(sessionId)
-        if (saved != null) {
-            messageHistory.clear()
-            messageHistory.addAll(saved.messageHistory)
-
-            // Restore stateStore from saved.serializedState
-            saved.serializedState?.let { serialized ->
-                session.stateSerializer?.let { serializer ->
-                    val state = Json.decodeFromString(serializer, serialized)
-                    session.stateStore?.set(state)
-                }
-            }
-
-            // Restore the agent that was active when the session was last saved.
-            val restoredDefinition = session.findAgent(saved.currentPhaseName)
-                ?: session.mainAgent
-            activateAgent(restoredDefinition, continueHistory = true)
-        } else {
-            activateAgent(session.mainAgent, continueHistory = false)
-        }
-
-        initialised = true
-    }
-
-    private fun resetActiveAgent() {
-        activeAgent = null
-        initialised = false
-    }
-
-    // ── Persistence ────────────────────────────────────────────────────────
-
-    private suspend fun persistTurn(userMessage: String, assistantResponse: String) {
-        messageHistory += SessionMessage(role = "user", content = userMessage)
-        messageHistory += SessionMessage(role = "assistant", content = assistantResponse)
-
-        val existing = session.store.load(sessionId)
-        val now = Clock.System.now().toEpochMilliseconds()
-
-        val serializedState = session.stateSerializer?.let { serializer ->
-            session.stateStore?.current?.let { state ->
-                Json.encodeToString(serializer, state)
-            }
-        }
-
-        session.store.save(
-            sessionId,
-            AgentSession(
-                sessionId = sessionId,
-                currentPhaseName = _activeAgentName.value,
-                messageHistory = messageHistory.toList(),
-                serializedState = serializedState,
-                createdAt = existing?.createdAt ?: now,
-                updatedAt = now,
-            )
-        )
-    }
-
     public companion object {
-        // Matches "handoff_to_<agentName>" anywhere in the response string.
         private val HANDOFF_PATTERN = Regex("""handoff_to_(\w+)""")
     }
 }

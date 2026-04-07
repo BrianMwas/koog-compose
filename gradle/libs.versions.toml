@@ -57,6 +57,7 @@ kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.
 # Koog AI engine
 koog-agents = { module = "ai.koog:koog-agents", version.ref = "koog" }
 koog-agents-core = { module = "ai.koog:agents-core", version.ref = "koog" }
+koog-agents-memory = { module = "ai.koog:agents-features-memory", version.ref = "koog" }
 koog-prompt-executor = { module = "ai.koog:prompt-executor-llms-all", version.ref = "koog" }
 
 # Compose
