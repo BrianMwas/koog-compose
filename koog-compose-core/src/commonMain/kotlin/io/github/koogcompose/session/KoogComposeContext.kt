@@ -368,3 +368,45 @@ public fun koogCompose(block: KoogComposeContext.Builder<Unit>.() -> Unit): Koog
 @JvmName("koogComposeStateful")
 public fun <S> koogCompose(block: KoogComposeContext.Builder<S>.() -> Unit): KoogComposeContext<S> =
     KoogComposeContext(block)
+
+
+/**
+ * Single-agent entry point — unchanged public API, now backed by [KoogAgentDefinition].
+ *
+ * [koogCompose] is sugar for `koogAgent("default") { }`. Both return a
+ * [KoogAgentDefinition], so single-agent code migrates to multi-agent by
+ * wrapping in a [koogSession], not rewriting.
+ *
+ * ```kotlin
+ * // Before
+ * val context = koogCompose {
+ *     provider { anthropic(apiKey = BuildConfig.KEY) }
+ *     phases {
+ *         phase("greeting") {
+ *             instructions { "Greet the user and offer to help." }
+ *         }
+ *     }
+ * }
+ *
+ * // After — wrap, don't rewrite
+ * val session = koogSession {
+ *     provider { anthropic(apiKey = BuildConfig.KEY) }
+ *     main {
+ *         phases {
+ *             phase("greeting") {
+ *                 instructions { "Greet the user and offer to help." }
+ *             }
+ *         }
+ *     }
+ * }
+ * ```
+ *
+ * The [KoogAgentDefinition] returned here can be passed directly to
+ * [singleAgentHandle] to obtain a [KoogSessionHandle] for `rememberChatState`.
+ *
+ * @see koogAgent for the named variant.
+ * @see koogSession for multi-agent sessions.
+ */
+public fun koogCompose(
+    block: KoogAgentDefinitionBuilder.() -> Unit
+): KoogAgentDefinition = koogAgent("default", block)

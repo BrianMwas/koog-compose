@@ -48,8 +48,6 @@ public interface SessionStore {
     public suspend fun exists(sessionId: String): Boolean
 }
 
-// ── AgentSession ───────────────────────────────────────────────────────────────
-
 /**
  * The full state required to resume an agent conversation.
  *
