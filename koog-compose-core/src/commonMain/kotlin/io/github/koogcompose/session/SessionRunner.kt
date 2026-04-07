@@ -165,15 +165,22 @@ public class SessionRunner<S>(
     private suspend fun runTurn(userMessage: String): String {
         var input = userMessage
         var hopsRemaining = session.config.maxAgentIterations
+        val handoffPath = mutableListOf<String>()
 
         while (hopsRemaining-- > 0) {
+            handoffPath.add(activeDefinition.name)
+
             val agent = requireNotNull(activeAgent) { "Agent failed to initialise." }
             val response = agent.run(input)
 
-            val handoffName = extractHandoffTarget(response)
-            if (handoffName == null) {
-                // Normal response — return to caller.
-                return response
+            val handoffName = extractHandoffTarget(response) ?: return response
+
+            // Proactive Loop Detection
+            if (handoffPath.count { it == handoffName } >= 2) {
+                throw IllegalStateException(
+                    "Handoff loop detected for agent '$handoffName'. " +
+                            "Path: ${handoffPath.joinToString(" -> ")} -> $handoffName"
+                )
             }
 
             // Resolve the target agent from the registry.
