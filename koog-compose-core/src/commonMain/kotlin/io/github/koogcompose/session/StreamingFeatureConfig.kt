@@ -1,6 +1,7 @@
 package io.github.koogcompose.session
 
 
+import ai.koog.agents.core.agent.config.AIAgentConfig
 import ai.koog.agents.core.agent.entity.AIAgentStorageKey
 import ai.koog.agents.core.feature.AIAgentGraphFeature
 import ai.koog.agents.core.feature.config.FeatureConfig
@@ -15,11 +16,19 @@ internal class StreamingFeatureConfig : FeatureConfig() {
 internal class StreamingFeature(
     private val tokenSink: MutableSharedFlow<String>
 ) {
+    /**
+     * Dispatches a token to the sink.
+     */
+    internal suspend fun onToken(token: String) {
+        tokenSink.emit(token)
+    }
+
+
     companion object : AIAgentGraphFeature<StreamingFeatureConfig, StreamingFeature> {
 
         override val key = AIAgentStorageKey<StreamingFeature>("koog-compose-streaming")
 
-        override fun createInitialConfig(agentConfig: ai.koog.agents.core.agent.config.AIAgentConfig) =
+        override fun createInitialConfig(agentConfig: AIAgentConfig) =
             StreamingFeatureConfig()
 
         override fun install(
@@ -31,7 +40,7 @@ internal class StreamingFeature(
             pipeline.interceptLLMStreamingFrameReceived(this) { eventContext ->
                 val frame = eventContext.streamFrame
                 if (frame is StreamFrame.TextDelta) {
-                    config.tokenSink.emit(frame.text)
+                    feature.onToken(frame.text)
                 }
             }
 
