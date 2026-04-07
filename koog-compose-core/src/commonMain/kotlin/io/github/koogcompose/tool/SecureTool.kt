@@ -63,6 +63,17 @@ public interface SecureTool {
     /** Executes the tool with the provided [args]. */
     public suspend fun execute(args: JsonObject): ToolResult
 
+    /**
+     * Validates the args delivered by the LLM before execution.
+     *
+     * Override to enforce required fields, types, or value ranges.
+     * Returning [ValidationResult.Invalid] blocks execution and surfaces
+     * the reason as a [ToolResult.Failure] — the LLM sees it and can retry.
+     *
+     * Default implementation accepts all args.
+     */
+    public fun validateArgs(args: JsonObject): ValidationResult = ValidationResult.Valid
+
     /** Returns a human-readable message to show the user when requesting confirmation. */
     public fun confirmationMessage(args: JsonObject): String = description
 }

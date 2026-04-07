@@ -22,6 +22,7 @@ Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges 
 | Reinvent session persistence each project | Drop-in `session-room` module with your own Room DAO |
 | Blank UI bubble while LLM thinks | `responseStream: Flow<String>` emits tokens as they arrive |
 | Raw exceptions surface to UI on failure | Retry with backoff + stuck detection + graceful fallback messages |
+| LLM hallucinated args crash your tool silently | `validateArgs()` blocks bad calls before execution |
  
 ---
 
@@ -124,22 +125,39 @@ val context = koogCompose<AppState> {
 Extend `StatefulTool<S>` to read and mutate app state as a side effect of execution:
 
 ```kotlin
-class GetCurrentLocationTool(
-    override val stateStore: KoogStateStore<AppState>,
-    private val locationClient: FusedLocationProviderClient
+class SendMoneyTool(
+    override val stateStore: KoogStateStore<AppState>
 ) : StatefulTool<AppState>() {
  
-    override val name = "GetCurrentLocation"
-    override val description = "Fetch the device GPS coordinates"
-    override val permissionLevel = PermissionLevel.SENSITIVE  // triggers confirmation UI
+    override val name = "SendMoney"
+    override val description = "Send money to a recipient"
+    override val permissionLevel = PermissionLevel.CRITICAL
+ 
+    // Optional — validate LLM-supplied args before anything else runs
+    override fun validateArgs(args: JsonObject): ValidationResult {
+        val amount = args["amount"]?.toString()?.toDoubleOrNull()
+            ?: return ValidationResult.Invalid("missing or non-numeric field: amount")
+        if (amount <= 0) return ValidationResult.Invalid("amount must be greater than 0")
+ 
+        args["recipientId"]
+            ?: return ValidationResult.Invalid("missing required field: recipientId")
+ 
+        return ValidationResult.Valid
+    }
  
     override suspend fun execute(args: JsonObject): ToolResult {
-        val coords = locationClient.awaitLastLocation()
-        stateStore.update { it.copy(location = coords) }
-        return ToolResult.Success("Location acquired: $coords")
+        // args are guaranteed valid here
+        val amount = args["amount"]!!.toString().toDouble()
+        val recipientId = args["recipientId"]!!.toString()
+        return ToolResult.Success("Sent $amount to $recipientId")
     }
 }
 ```
+
+`validateArgs()` is optional — the default accepts all args, so existing tools need no
+changes. When validation fails, `GuardedTool` returns a `ToolResult.Failure` with your
+reason before guardrails, confirmation, or `execute()` are ever reached. The LLM sees
+the failure and can correct its args on the next iteration.
 
 ### 4. Run it from a ViewModel
 
@@ -254,6 +272,25 @@ greeting ──► location_check ──► confirm_location ──► END
 ```
 
 Transitions are driven by the LLM reading the current `AppState` — you define the conditions, the agent decides when they're met.
+
+### Arg validation
+
+`SecureTool` exposes an optional `validateArgs(args: JsonObject): ValidationResult` hook.
+`GuardedTool` runs it as step 0 — before rate limit checks, before confirmation dialogs,
+before `execute()`. A `ValidationResult.Invalid` response short-circuits the entire call
+and returns a `ToolResult.Failure` with your reason. The LLM sees the failure and can
+correct its args on the next iteration.
+
+```
+LLM delivers args
+  → validateArgs()          ← your field/type checks        (step 0)
+      → GuardrailEnforcer   ← rate limits, allowlists       (step 1)
+          → confirmation UI ← SENSITIVE / CRITICAL          (step 2)
+              → execute()   ← guaranteed valid args         (step 3)
+```
+
+Existing tools that don't override `validateArgs()` are unaffected — the default returns
+`ValidationResult.Valid`.
 
 ### Streaming
 
@@ -413,6 +450,7 @@ val context = koogCompose {
 | Typed shared state | ✅ | ✅ | ✅ |
 | Token streaming | ✅ | ✅ | ✅ |
 | Retry & stuck detection | ✅ | ✅ | ✅ |
+| Arg validation | ✅ | ✅ | ✅ |
 | Compose UI | ✅ | ✅ | ✅ |
 | Room session store | ✅ | ✅ | — |
 | Device tools (location) | ✅ | 🔜 v1.1 | — |
@@ -444,6 +482,7 @@ val context = koogCompose {
 - **iOS device parity** — `CLLocation` and `PHPicker` tool support
 - **ActivityResult integration** — camera, file picker, permissions as agent tools
 - **WorkManager proactive agents** — background context gathering
+- **Structured observability** — pluggable `EventSink` for Firebase, Datadog, custom backends
 
 ### v1.2
 - **Backend telemetry sinks** — Firebase, remote tracing exporters
