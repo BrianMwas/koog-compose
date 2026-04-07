@@ -1,13 +1,14 @@
 package io.github.koogcompose.session
 
+import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.model.PromptExecutor
-import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
 import io.github.koogcompose.tool.HandoffContext
 import io.github.koogcompose.tool.HandoffTool
 import io.github.koogcompose.tool.handoffToolName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlin.time.Clock
+import kotlinx.serialization.json.Json
 
 /**
  * Multi-agent runtime for a [KoogSession].
@@ -37,23 +39,6 @@ import kotlin.time.Clock
  *     )
  * }
  * ```
- *
- * Compose:
- * ```kotlin
- * @Composable
- * fun ProductivityScreen(viewModel: ProductivityViewModel = viewModel()) {
- *     val activeAgent by viewModel.runner.activeAgentName.collectAsState()
- *     val appState    by viewModel.runner.appState!!.collectAsState()
- *     val chatState   = rememberChatState(viewModel.runner)
- *     // ...
- * }
- * ```
- *
- * @param S         Shared app state type.
- * @param session   The [KoogSession] definition — provider, main agent, specialists, state.
- * @param executor  Koog [PromptExecutor] for LLM calls.
- * @param sessionId Stable conversation identifier.
- * @param scope     Use `viewModelScope` — cancelled automatically on ViewModel clear.
  */
 public class SessionRunner<S>(
     private val session: KoogSession<S>,
@@ -87,7 +72,7 @@ public class SessionRunner<S>(
     // ── Internal runtime state ─────────────────────────────────────────────
 
     // The agent currently built and ready to run. Replaced on every handoff.
-    private var activeAgent: ai.koog.agents.core.agent.AIAgent<String, String>? = null
+    private var activeAgent: AIAgent<String, String>? = null
 
     // The definition driving the active agent. Starts as main.
     private var activeDefinition: KoogAgentDefinition = session.mainAgent
@@ -111,7 +96,7 @@ public class SessionRunner<S>(
 
             repeat(retryPolicy.maxAttempts) { attempt ->
                 if (lastError != null) {
-                    kotlinx.coroutines.delay(delayMs)
+                    delay(delayMs)
                     delayMs *= 2
                 }
                 try {
@@ -179,7 +164,7 @@ public class SessionRunner<S>(
             if (handoffPath.count { it == handoffName } >= 2) {
                 throw IllegalStateException(
                     "Handoff loop detected for agent '$handoffName'. " +
-                            "Path: ${handoffPath.joinToString(" -> ")} -> $handoffName"
+                        "Path: ${handoffPath.joinToString(" -> ")} -> $handoffName"
                 )
             }
 
@@ -187,7 +172,7 @@ public class SessionRunner<S>(
             val targetDefinition = session.findAgent(handoffName)
                 ?: error(
                     "koog-compose: Handoff target '$handoffName' is not registered. " +
-                            "Add it via agents($handoffName) in your koogSession { } block."
+                        "Add it via agents($handoffName) in your koogSession { } block."
                 )
 
             // Find the handoff declaration to check options.
@@ -209,7 +194,7 @@ public class SessionRunner<S>(
 
         error(
             "koog-compose: Handoff chain exceeded maxAgentIterations " +
-                    "(${session.config.maxAgentIterations}). Possible routing loop."
+                "(${session.config.maxAgentIterations}). Possible routing loop."
         )
     }
 
@@ -229,7 +214,7 @@ public class SessionRunner<S>(
         val context = session.contextFor(definition)
 
         activeAgent = PhaseAwareAgent.create(
-            context = if (continueHistory) context else context,
+            context = context,
             promptExecutor = executor,
             strategyName = "session-${definition.name}",
             tokenSink = _responseStream,
@@ -277,6 +262,14 @@ public class SessionRunner<S>(
             messageHistory.clear()
             messageHistory.addAll(saved.messageHistory)
 
+            // Restore stateStore from saved.serializedState
+            saved.serializedState?.let { serialized ->
+                session.stateSerializer?.let { serializer ->
+                    val state = Json.decodeFromString(serializer, serialized)
+                    session.stateStore?.set(state)
+                }
+            }
+
             // Restore the agent that was active when the session was last saved.
             val restoredDefinition = session.findAgent(saved.currentPhaseName)
                 ?: session.mainAgent
@@ -300,13 +293,23 @@ public class SessionRunner<S>(
         messageHistory += SessionMessage(role = "assistant", content = assistantResponse)
 
         val existing = session.store.load(sessionId)
+        val now = Clock.System.now().toEpochMilliseconds()
+
+        val serializedState = session.stateSerializer?.let { serializer ->
+            session.stateStore?.current?.let { state ->
+                Json.encodeToString(serializer, state)
+            }
+        }
+
         session.store.save(
             sessionId,
             AgentSession(
                 sessionId = sessionId,
                 currentPhaseName = _activeAgentName.value,
                 messageHistory = messageHistory.toList(),
-                createdAt = existing?.createdAt ?: Clock.System.now().toEpochMilliseconds(),
+                serializedState = serializedState,
+                createdAt = existing?.createdAt ?: now,
+                updatedAt = now,
             )
         )
     }

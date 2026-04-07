@@ -4,6 +4,7 @@ import io.github.koogcompose.phase.PhaseRegistry
 import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.provider.ProviderConfigBuilder
 import io.github.koogcompose.tool.ToolRegistry
+import kotlinx.serialization.KSerializer
 
 /**
  * Multi-agent session definition.
@@ -45,6 +46,7 @@ public data class KoogSession<S>(
     val mainAgent: KoogAgentDefinition,
     val agentRegistry: Map<String, KoogAgentDefinition>,
     val stateStore: KoogStateStore<S>?,
+    val stateSerializer: KSerializer<S>? = null,
     val store: SessionStore = InMemorySessionStore(),
     val config: KoogSessionConfig = KoogSessionConfig(),
 ) {
@@ -72,13 +74,14 @@ public data class KoogSession<S>(
      */
     public fun contextFor(agent: KoogAgentDefinition): KoogComposeContext<S> {
         val resolvedProvider = resolveProviderFor(agent)
-        return KoogComposeContext(
+        return KoogComposeContext.createInternal(
             providerConfig = resolvedProvider,
             promptStack = io.github.koogcompose.prompt.PromptStack.Empty,
             toolRegistry = agent.toolRegistry,
             phaseRegistry = agent.phaseRegistry,
             activePhaseName = agent.phaseRegistry.initialPhase?.name,
             stateStore = stateStore,
+            stateSerializer = stateSerializer,
             config = config.toKoogConfig(),
         )
     }
@@ -94,18 +97,24 @@ public data class KoogSession<S>(
  */
 public data class KoogSessionConfig(
     val maxAgentIterations: Int = 15,
-    val retryPolicy: io.github.koogcompose.session.RetryPolicy = RetryPolicy(),
+    val retryPolicy: RetryPolicy = RetryPolicy(),
     val guardrails: io.github.koogcompose.security.Guardrails =
         io.github.koogcompose.security.Guardrails.Default,
     val streamingEnabled: Boolean = true,
     val auditLoggingEnabled: Boolean = true,
 ) {
     public fun toKoogConfig(): KoogConfig = KoogConfig(
-        maxAgentIterations = maxAgentIterations,
-        retryPolicy = retryPolicy,
-        guardrails = guardrails,
         streamingEnabled = streamingEnabled,
+        rateLimitPerMinute = 0,
         auditLoggingEnabled = auditLoggingEnabled,
+        requireConfirmationForSensitive = true,
+        historyCompression = null,
+        retryPolicy = retryPolicy,
+        llmParams = null,
+        responseCache = false,
+        structureFixingRetries = 3,
+        maxAgentIterations = maxAgentIterations,
+        guardrails = guardrails,
     )
 
     public class Builder {
@@ -168,32 +177,21 @@ public fun koogSession(
 // ── KoogSessionBuilder ────────────────────────────────────────────────────────
 
 public class KoogSessionBuilder<S> {
-
     private var globalProvider: ProviderConfig? = null
     private var mainAgentDefinition: KoogAgentDefinition? = null
     private val specialists = mutableMapOf<String, KoogAgentDefinition>()
     private var stateStore: KoogStateStore<S>? = null
+    private var stateSerializer: KSerializer<S>? = null
     private var store: SessionStore = InMemorySessionStore()
     private var config: KoogSessionConfig = KoogSessionConfig()
 
-    /**
-     * Declares the session-level provider.
-     * Inherited by every agent that does not declare its own `provider { }`.
-     */
     public fun provider(block: ProviderConfigBuilder.() -> Unit) {
         globalProvider = ProviderConfigBuilder().apply(block).build()
     }
 
-    /**
-     * Declares shared app state.
-     * Every agent's tools can read and write this via `stateStore.update { }`.
-     *
-     * ```kotlin
-     * state { AppState(userId = "brian") }
-     * ```
-     */
-    public fun state(block: () -> S) {
+    public fun state(serializer: KSerializer<S>, block: () -> S) {
         stateStore = KoogStateStore(block())
+        stateSerializer = serializer
     }
 
     /**
@@ -271,6 +269,7 @@ public class KoogSessionBuilder<S> {
             mainAgent = main,
             agentRegistry = specialists.toMap(),
             stateStore = stateStore,
+            stateSerializer = stateSerializer,
             store = store,
             config = config,
         )
