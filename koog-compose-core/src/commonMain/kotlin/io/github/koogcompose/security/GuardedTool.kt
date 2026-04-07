@@ -3,6 +3,7 @@ package io.github.koogcompose.security
 import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolResult
+import io.github.koogcompose.tool.ValidationResult
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -20,6 +21,14 @@ internal class GuardedTool(
 ) : SecureTool by delegate {
 
     override suspend fun execute(args: JsonObject): ToolResult {
+        // 0. Arg validation — catches hallucinated fields/types before anything else runs
+        when (val validation = delegate.validateArgs(args)) {
+            is ValidationResult.Invalid -> return ToolResult.Failure(
+                "Invalid args for ${delegate.name}: ${validation.reason}"
+            )
+            is ValidationResult.Valid -> Unit
+        }
+
         // 1. Guardrail check (rate limits, allowlists)
         val denial = enforcer.validate(delegate.name, args, userId)
         if (denial != null) return denial
@@ -33,6 +42,7 @@ internal class GuardedTool(
             )
             if (!confirmed) return ToolResult.Denied("User did not confirm ${delegate.name}")
         }
+
         return delegate.execute(args)
     }
 }
