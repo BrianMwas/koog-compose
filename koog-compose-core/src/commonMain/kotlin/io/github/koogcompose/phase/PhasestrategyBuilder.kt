@@ -2,8 +2,6 @@ package io.github.koogcompose.phase
 
 import ai.koog.agents.core.agent.entity.AIAgentSubgraph
 import ai.koog.agents.core.agent.entity.AIAgentGraphStrategy
-import ai.koog.agents.core.agent.entity.AIAgentNodeBase
-import ai.koog.agents.core.dsl.builder.forwardTo
 import ai.koog.agents.core.dsl.builder.node
 import ai.koog.agents.core.dsl.builder.strategy
 import ai.koog.agents.core.dsl.builder.subgraph

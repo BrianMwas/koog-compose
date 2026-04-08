@@ -128,7 +128,7 @@ public data class ChatSessionState(
 /**
  * Manages a single chat conversation and the tool/phase loop around it.
  */
-public class ChatSession(
+public open class ChatSession(
     public val initialContext: KoogComposeContext<*>,
     private val provider: AIProvider,
     private val scope: CoroutineScope,

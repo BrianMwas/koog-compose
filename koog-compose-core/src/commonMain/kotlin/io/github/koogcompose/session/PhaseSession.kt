@@ -32,7 +32,7 @@ import kotlin.time.Clock
  *   can stamp events with the correct turn number.
  */
 public class PhaseSession<S>(
-    private val context: KoogComposeContext<S>,
+    public val context: KoogComposeContext<S>,
     private val executor: PromptExecutor,
     override val sessionId: String,
     private val store: SessionStore = InMemorySessionStore(),
