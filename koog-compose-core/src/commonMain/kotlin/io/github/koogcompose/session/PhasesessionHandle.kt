@@ -9,8 +9,9 @@ import kotlinx.coroutines.flow.StateFlow
 /**
  * Adapts [PhaseSession] to [KoogSessionHandle].
  *
- * Exposes [context] so that [rememberChatState(handle, context)] can derive
- * the correct [KoogComposeContext] without casting or reaching into internals.
+ * Every property delegates directly to [delegate] — including [activity] and
+ * [activityDetail] which are now owned by [PhaseSession] itself. The handle
+ * is a thin pass-through; it adds no state of its own.
  */
 public class PhaseSessionHandle<S>(
     private val delegate: PhaseSession<S>,
@@ -21,6 +22,13 @@ public class PhaseSessionHandle<S>(
 
     override val sessionId: String
         get() = delegate.sessionId
+
+    // Activity state — delegated directly from PhaseSession.
+    override val activity: StateFlow<AgentActivity>
+        get() = delegate.activity
+
+    override val activityDetail: StateFlow<String>
+        get() = delegate.activityDetail
 
     override val isRunning: StateFlow<Boolean>
         get() = delegate.isRunning
@@ -51,9 +59,9 @@ public class PhaseSessionHandle<S>(
 /**
  * Creates a [PhaseSessionHandle] for a single-agent context.
  *
- * The [executor] is passed explicitly here because [PhaseSession] is wired
- * directly to Koog's pipeline and cannot build its own executor — the
- * caller (typically a ViewModel) owns the executor lifetime.
+ * [executor] is passed explicitly — [PhaseSession] is wired directly to
+ * Koog's AIAgent pipeline and requires a real [PromptExecutor]. The caller
+ * (ViewModel) owns the executor lifetime.
  */
 public fun <S> singleAgentHandle(
     context: KoogComposeContext<S>,
@@ -76,7 +84,8 @@ public fun <S> singleAgentHandle(
 /**
  * Adapts [SessionRunner] to [KoogSessionHandle].
  *
- * [context] exposes the main agent's [KoogComposeContext] for [rememberChatState].
+ * Every property delegates directly to [delegate], including [activity] and
+ * [activityDetail] which are owned by [SessionRunner].
  */
 public class SessionRunnerHandle<S>(
     private val delegate: SessionRunner<S>,
@@ -87,6 +96,13 @@ public class SessionRunnerHandle<S>(
 
     override val sessionId: String
         get() = delegate.sessionId
+
+    // Activity state — delegated directly from SessionRunner.
+    override val activity: StateFlow<AgentActivity>
+        get() = delegate.activity
+
+    override val activityDetail: StateFlow<String>
+        get() = delegate.activityDetail
 
     override val isRunning: StateFlow<Boolean>
         get() = delegate.isRunning
@@ -120,10 +136,8 @@ public class SessionRunnerHandle<S>(
 /**
  * Creates a [SessionRunnerHandle] for a multi-agent [KoogSession].
  *
- * The executor is built internally from [session.globalProvider] so the
- * call site (sample app, ViewModel) never needs to import [PromptExecutor]
- * or depend on koog-agents-core directly. [SessionRunner] constructs the
- * executor once and reuses it across all agent builds.
+ * The executor is built inside [SessionRunner] from the session's provider
+ * config — call sites never need to import [PromptExecutor] directly.
  */
 public fun <S> multiAgentHandle(
     session: KoogSession<S>,
@@ -131,9 +145,8 @@ public fun <S> multiAgentHandle(
     scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
 ): SessionRunnerHandle<S> = SessionRunnerHandle(
     SessionRunner(
-        session = session,
+        session   = session,
         sessionId = sessionId,
-        scope = scope,
-        executor = TODO(),
+        scope     = scope,
     )
 )

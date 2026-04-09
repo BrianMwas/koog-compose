@@ -137,4 +137,4 @@ private fun Message.toSessionMessage(): SessionMessage? = when (this) {
  * (e.g. `content.filterIsInstance<ContentPart.Text>().joinToString { it.text }`).
  */
 private fun extractUserText(message: Message.User): String =
-    message.content.toString()
+    message.content

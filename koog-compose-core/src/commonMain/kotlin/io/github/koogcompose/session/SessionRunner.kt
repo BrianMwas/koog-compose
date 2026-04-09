@@ -5,6 +5,7 @@ import ai.koog.prompt.executor.model.PromptExecutor
 import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
+import io.github.koogcompose.provider.buildExecutor
 import io.github.koogcompose.tool.HandoffTool
 import io.github.koogcompose.tool.HandoffContext
 import io.github.koogcompose.tool.handoffToolName
@@ -37,8 +38,9 @@ public class SessionRunner<S>(
 ) : KoogSessionHandle {
 
     // Build executor once from the session's main agent context.
+    // ✅ Correct — build the executor the same way KoogAIProvider does internally
     private val executor: PromptExecutor =
-        session.contextFor(session.mainAgent).createProvider() as PromptExecutor
+        buildExecutor(session.contextFor(session.mainAgent).providerConfig)
 
     // ── Activity state ─────────────────────────────────────────────────────
 
@@ -48,8 +50,8 @@ public class SessionRunner<S>(
     private val _activityDetail = MutableStateFlow("")
     override val activityDetail: StateFlow<String> = _activityDetail.asStateFlow()
 
-    private val _isRunningDerived = MutableStateFlow(false)
-    override val isRunning: StateFlow<Boolean> = _isRunningDerived.asStateFlow()
+    private val _isRunning = MutableStateFlow(false)
+    override val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
 
     // ── Other observable state ─────────────────────────────────────────────
 
@@ -85,7 +87,7 @@ public class SessionRunner<S>(
 
     init {
         scope.launch {
-            _activity.collect { _isRunningDerived.value = it.isRunning }
+            _activity.collect { _isRunning.value = it.isRunning }
         }
     }
 
@@ -130,8 +132,8 @@ public class SessionRunner<S>(
 
             if (lastError != null) {
                 _error.value = lastError
-                _activity.value = AgentActivity.Failed(lastError!!)
-                _activityDetail.value = lastError!!.message ?: "Unknown error"
+                _activity.value = AgentActivity.Failed(lastError)
+                _activityDetail.value = lastError.message ?: "Unknown error"
             }
         }
     }

@@ -198,8 +198,8 @@ public class PhaseSession<S>(
             if (lastError != null) {
                 _error.value = lastError
                 // Failed is sticky — persists until next send().
-                _activity.value = AgentActivity.Failed(lastError!!)
-                _activityDetail.value = lastError!!.message ?: "Unknown error"
+                _activity.value = AgentActivity.Failed(lastError)
+                _activityDetail.value = lastError.message ?: "Unknown error"
                 eventHandlers.dispatch(
                     KoogEvent.TurnFailed(
                         timestampMs = Clock.System.now().toEpochMilliseconds(),
