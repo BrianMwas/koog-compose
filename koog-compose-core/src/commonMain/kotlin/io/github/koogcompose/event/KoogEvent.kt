@@ -17,7 +17,7 @@ public sealed interface KoogEvent {
     /** Triggered when an AI request is rejected due to rate limits. */
     public data class RateLimited(
         override val timestampMs: Long,
-        override val phaseName: String?
+        override val phaseName: String?,
     ) : KoogEvent {
         override val turnId: String? = null
     }
@@ -29,7 +29,7 @@ public sealed interface KoogEvent {
         override val phaseName: String?,
         val userMessageId: String,
         val text: String,
-        val attachmentCount: Int
+        val attachmentCount: Int,
     ) : KoogEvent
 
     /** Fired when the agent visits the same phase with equivalent input N times consecutively. */
@@ -38,7 +38,7 @@ public sealed interface KoogEvent {
         override val turnId: String,
         override val phaseName: String?,
         val consecutiveCount: Int,
-        val fallbackMessage: String
+        val fallbackMessage: String,
     ) : KoogEvent
 
     /** Triggered when a provider starts a new generation pass. */
@@ -47,7 +47,7 @@ public sealed interface KoogEvent {
         override val turnId: String,
         override val phaseName: String?,
         val passIndex: Int,
-        val availableTools: List<String>
+        val availableTools: List<String>,
     ) : KoogEvent
 
     /** Triggered when a raw chunk is received from the provider. */
@@ -56,7 +56,7 @@ public sealed interface KoogEvent {
         override val turnId: String,
         override val phaseName: String?,
         val passIndex: Int,
-        val chunk: AIResponseChunk
+        val chunk: AIResponseChunk,
     ) : KoogEvent
 
     /** Triggered when a provider pass completes successfully. */
@@ -64,7 +64,7 @@ public sealed interface KoogEvent {
         override val timestampMs: Long,
         override val turnId: String,
         override val phaseName: String?,
-        val passIndex: Int
+        val passIndex: Int,
     ) : KoogEvent
 
     /** Triggered when a provider pass fails. */
@@ -73,8 +73,49 @@ public sealed interface KoogEvent {
         override val turnId: String,
         override val phaseName: String?,
         val passIndex: Int,
-        val message: String
+        val message: String,
     ) : KoogEvent
+
+    // ── Reasoning events ────────────────────────────────────────────────────
+    // Fired by models that support extended thinking (o1, Gemini Thinking,
+    // Claude extended thinking). Models that don't emit reasoning tokens
+    // will never fire these — the turn goes directly TurnStarted → Thinking.
+
+    /**
+     * Fired when the model begins emitting reasoning / thinking tokens.
+     * The UI should switch to a "thinking..." shimmer or collapsed reasoning block.
+     * Subsequent [ReasoningDelta] events carry the token-by-token content.
+     */
+    public data class ReasoningStarted(
+        override val timestampMs: Long,
+        override val turnId: String,
+        override val phaseName: String?,
+    ) : KoogEvent
+
+    /**
+     * A single reasoning token delta. Accumulated into activityDetail so the
+     * UI can optionally display the model's reasoning process.
+     */
+    public data class ReasoningDelta(
+        override val timestampMs: Long,
+        override val turnId: String,
+        override val phaseName: String?,
+        val token: String,
+    ) : KoogEvent
+
+    /**
+     * Fired when the model finishes reasoning and transitions to generating
+     * its visible response. The UI should switch from the shimmer to streaming tokens.
+     * [fullReasoningText] contains the complete reasoning output.
+     */
+    public data class ReasoningCompleted(
+        override val timestampMs: Long,
+        override val turnId: String,
+        override val phaseName: String?,
+        val fullReasoningText: String,
+    ) : KoogEvent
+
+    // ── Tool events ─────────────────────────────────────────────────────────
 
     /** Triggered when the AI requests to execute a tool. */
     public data class ToolCallRequested(
@@ -83,7 +124,7 @@ public sealed interface KoogEvent {
         override val phaseName: String?,
         val toolCallId: String?,
         val toolName: String,
-        val args: JsonObject
+        val args: JsonObject,
     ) : KoogEvent
 
     /** Triggered when a sensitive or critical tool requires user approval. */
@@ -94,7 +135,7 @@ public sealed interface KoogEvent {
         val toolCallId: String?,
         val toolName: String,
         val permissionLevel: PermissionLevel,
-        val confirmationMessage: String
+        val confirmationMessage: String,
     ) : KoogEvent
 
     /** Triggered when the conversation moves from one phase to another. */
@@ -104,7 +145,7 @@ public sealed interface KoogEvent {
         override val phaseName: String?,
         val toolCallId: String?,
         val fromPhaseName: String?,
-        val toPhaseName: String
+        val toPhaseName: String,
     ) : KoogEvent
 
     /** Triggered when a tool execution finishes. */
@@ -115,8 +156,10 @@ public sealed interface KoogEvent {
         val toolCallId: String?,
         val toolName: String,
         val result: ToolResult,
-        val isPhaseTransition: Boolean = false
+        val isPhaseTransition: Boolean = false,
     ) : KoogEvent
+
+    // ── Turn lifecycle ───────────────────────────────────────────────────────
 
     /** Triggered when a conversation turn completes fully. */
     public data class TurnCompleted(
@@ -124,7 +167,7 @@ public sealed interface KoogEvent {
         override val turnId: String,
         override val phaseName: String?,
         val assistantMessageId: String,
-        val toolNames: List<String>
+        val toolNames: List<String>,
     ) : KoogEvent
 
     /** Triggered when a turn fails. */
@@ -132,14 +175,14 @@ public sealed interface KoogEvent {
         override val timestampMs: Long,
         override val turnId: String,
         override val phaseName: String?,
-        val message: String
+        val message: String,
     ) : KoogEvent
 
     /** Triggered when the user or system cancels an active turn. */
     public data class TurnCancelled(
         override val timestampMs: Long,
         override val turnId: String,
-        override val phaseName: String?
+        override val phaseName: String?,
     ) : KoogEvent
 
     // ── Routine & Graph Orchestration Events ────────────────────────────────
@@ -150,7 +193,7 @@ public sealed interface KoogEvent {
         override val turnId: String?,
         override val phaseName: String?,
         val nodeId: String,
-        val routineId: String
+        val routineId: String,
     ) : KoogEvent
 
     /** Triggered when a node in the graph completes. */
@@ -160,14 +203,14 @@ public sealed interface KoogEvent {
         override val phaseName: String?,
         val nodeId: String,
         val routineId: String,
-        val output: JsonObject
+        val output: JsonObject,
     ) : KoogEvent
 
     /** Triggered when an entire routine (subgraph) starts. */
     public data class RoutineStarted(
         override val timestampMs: Long,
         override val phaseName: String?,
-        val routineId: String
+        val routineId: String,
     ) : KoogEvent {
         override val turnId: String? = null
     }
@@ -181,7 +224,7 @@ public sealed interface KoogEvent {
         override val phaseName: String?,
         val action: String,
         val data: String? = null,
-        val packageName: String? = null
+        val packageName: String? = null,
     ) : KoogEvent
 
     /** Triggered when an Activity result is received. */
@@ -190,7 +233,7 @@ public sealed interface KoogEvent {
         override val turnId: String?,
         override val phaseName: String?,
         val resultCode: Int,
-        val data: String? = null
+        val data: String? = null,
     ) : KoogEvent
 
     /** Triggered when a screenshot is captured for context. */
@@ -198,7 +241,7 @@ public sealed interface KoogEvent {
         override val timestampMs: Long,
         override val turnId: String?,
         override val phaseName: String?,
-        val path: String
+        val path: String,
     ) : KoogEvent
 
     /** Triggered when a background sync phase begins or ends. */
@@ -206,17 +249,13 @@ public sealed interface KoogEvent {
         override val timestampMs: Long,
         override val phaseName: String?,
         val syncId: String,
-        val source: String
+        val source: String,
     ) : KoogEvent {
         override val turnId: String? = null
     }
 
     /**
      * Fired whenever a background job changes state.
-     *
-     * @param jobId  The stable identifier supplied at [BackgroundJobProvider.enqueue].
-     * @param status One of: "scheduled" | "running" | "completed" | "failed"
-     * @param error  Human-readable failure reason; non-null only when [status] == "failed".
      */
     public data class BackgroundJobStatus(
         override val timestampMs: Long,
@@ -257,10 +296,6 @@ public class KoogEventBus {
         handlers.remove(handler)
     }
 
-    /**
-     * Dispatches an event to all registered handlers.
-     * Marked as public to allow orchestration layers in other modules to emit events.
-     */
     public fun dispatch(event: KoogEvent): Unit {
         handlers.forEach { it.onEvent(event) }
     }
