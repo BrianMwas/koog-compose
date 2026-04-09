@@ -160,7 +160,7 @@ public data class KoogConfig(
         public var structureFixingRetries: Int = 3
         private var stuckDetection: StuckDetectionConfig? = null
         public var maxAgentIterations: Int = 10
-        
+
         private var historyCompression: HistoryCompressionConfig? = null
         private var retryPolicy: RetryPolicy = RetryPolicy()
         private var llmParams: LLMParamsConfig? = null
@@ -239,10 +239,40 @@ public class LLMParamsConfigBuilder {
 }
 
 
-// ── KoogComposeContext ────────────────────────────────────────────────────────
 
 /**
  * The central runtime object for koog-compose.
+ *
+ * Carries everything the agent needs for a turn:
+ * - [providerConfig]           → which LLM to call
+ * - [promptStack]              → global system prompt layers
+ * - [toolRegistry]             → tools available at the session level
+ * - [phaseRegistry]            → phase definitions and transitions
+ * - [activePhaseName]          → which phase is currently active
+ * - [eventHandlers]            → session-level event observers
+ * - [stateStore]               → typed shared app state (null if stateless)
+ * - [config]                   → runtime config (retries, stuck detection, etc.)
+ * - [contextualInstructions]   → environment-scoped instruction layers (new)
+ *
+ * ## Contextual instructions
+ * Inspired by Scion's automatic instruction injection (agents-git.md,
+ * agents-hub.md), contextual instructions are conditional layers appended
+ * to the resolved system prompt in [resolveEffectiveInstructions].
+ *
+ * They are evaluated lazily on each call — [WhenPhase] checks the current
+ * [activePhaseName], [WhenBlocked] is passed in explicitly by [PhaseSession]
+ * when stuck detection fires, [Always] always appends.
+ *
+ * Declared via the `contextual { }` DSL block:
+ * ```kotlin
+ * koogCompose {
+ *     contextual {
+ *         always { "You are running inside a mobile app. Keep responses concise." }
+ *         whenPhase("payment") { "The user is completing a payment. Be precise." }
+ *         whenBlocked { "Try a completely different approach." }
+ *     }
+ * }
+ * ```
  */
 public data class KoogComposeContext<S>(
     val providerConfig: ProviderConfig,
@@ -251,12 +281,12 @@ public data class KoogComposeContext<S>(
     val phaseRegistry: PhaseRegistry = PhaseRegistry.Empty,
     val activePhaseName: String? = null,
     val eventHandlers: EventHandlers = EventHandlers.Empty,
-    val stateStore: KoogStateStore<S>?,          // ← typed, not <*>
+    val stateStore: KoogStateStore<S>?,
     val config: KoogConfig,
+    val contextualInstructions: List<ContextualInstruction> = emptyList(),
 ) {
     public fun createProvider(): AIProvider = KoogAIProvider(this)
-    public val provider: AIProvider
-        get() = createProvider()
+    public val provider: AIProvider get() = createProvider()
 
     public val activePhase: Phase? get() = activePhaseName?.let { phaseRegistry.resolve(it) }
 
@@ -270,22 +300,45 @@ public data class KoogComposeContext<S>(
 
     public fun withPhase(name: String): KoogComposeContext<S> = copy(activePhaseName = name)
 
-    public fun resolveEffectiveInstructions(): String {
+    /**
+     * Resolves the full system prompt for the current turn.
+     *
+     * Resolution order:
+     * 1. Global prompt stack (session-level context)
+     * 2. Current phase name + phase instructions
+     * 3. Contextual instruction layers whose conditions are met
+     *
+     * [isBlocked] should be true when stuck detection has fired so that
+     * [ContextCondition.WhenBlocked] layers are included in the prompt.
+     * [PhaseSession] and [SessionRunner] pass this when building the agent
+     * on a blocked turn.
+     */
+    public fun resolveEffectiveInstructions(isBlocked: Boolean = false): String {
         val globalPrompt = promptStack.resolve().trim()
         val phase = activePhase ?: phaseRegistry.initialPhase
-        if (phase == null) {
-            return globalPrompt
+
+        val parts = buildList {
+            if (globalPrompt.isNotBlank()) add(globalPrompt)
+
+            if (phase != null) {
+                add("CURRENT PHASE: ${phase.name}")
+                if (phase.resolvedInstructions.isNotBlank()) {
+                    add(phase.resolvedInstructions.trim())
+                }
+            }
+
+            // Evaluate contextual instruction conditions against current runtime state.
+            val matching = contextualInstructions.filter { instruction ->
+                when (val cond = instruction.condition) {
+                    is ContextCondition.Always    -> true
+                    is ContextCondition.WhenPhase -> cond.phaseName == activePhaseName
+                    is ContextCondition.WhenBlocked -> isBlocked
+                }
+            }
+            matching.forEach { add(it.content.trim()) }
         }
 
-        return buildList {
-            if (globalPrompt.isNotBlank()) {
-                add(globalPrompt)
-            }
-            add("CURRENT PHASE: ${phase.name}")
-            if (phase.resolvedInstructions.isNotBlank()) {
-                add(phase.resolvedInstructions.trim())
-            }
-        }.joinToString(separator = "\n\n")
+        return parts.joinToString(separator = "\n\n")
     }
 
     public fun resolveEffectiveTools(): List<SecureTool> {
@@ -304,52 +357,69 @@ public data class KoogComposeContext<S>(
         private var stateStore: KoogStateStore<S>? = null
         private var eventHandlers: EventHandlers = EventHandlers.Empty
         private var config: KoogConfig = KoogConfig()
+        private var contextualInstructions: List<ContextualInstruction> = emptyList()
 
-        public fun provider(block: ProviderConfigBuilder.() -> Unit): Unit {
+        public fun provider(block: ProviderConfigBuilder.() -> Unit) {
             providerConfig = ProviderConfigBuilder().apply(block).build()
         }
 
-        public fun prompt(block: PromptStack.Builder.() -> Unit): Unit {
+        public fun prompt(block: PromptStack.Builder.() -> Unit) {
             promptStack = PromptStack(block)
         }
 
-        public fun tools(block: ToolRegistry.Builder.() -> Unit): Unit {
+        public fun tools(block: ToolRegistry.Builder.() -> Unit) {
             toolRegistry = ToolRegistry(block)
         }
 
-        public fun phases(block: PhaseRegistry.Builder.() -> Unit): Unit {
+        public fun phases(block: PhaseRegistry.Builder.() -> Unit) {
             phaseRegistry = PhaseRegistry.Builder().apply(block).build()
             if (activePhaseName == null) {
                 activePhaseName = phaseRegistry.all.firstOrNull()?.name
             }
         }
 
-        public fun initialState(block: () -> S): Unit {
+        public fun initialState(block: () -> S) {
             stateStore = KoogStateStore(block())
         }
 
-        public fun initialPhase(name: String): Unit {
+        public fun initialPhase(name: String) {
             activePhaseName = name
         }
 
-        public fun events(block: EventHandlers.Builder.() -> Unit): Unit {
+        public fun events(block: EventHandlers.Builder.() -> Unit) {
             eventHandlers = EventHandlers(block)
         }
 
-        public fun config(block: KoogConfig.Builder.() -> Unit): Unit {
+        public fun config(block: KoogConfig.Builder.() -> Unit) {
             config = KoogConfig(block)
         }
 
+        /**
+         * Declares environment-scoped instruction layers.
+         *
+         * ```kotlin
+         * contextual {
+         *     always { "You are running inside a mobile app. Keep responses concise." }
+         *     whenPhase("payment") { "The user is completing a payment. Be precise." }
+         *     whenBlocked { "Try a completely different approach." }
+         * }
+         * ```
+         */
+        public fun contextual(block: ContextualInstructionsBuilder.() -> Unit) {
+            contextualInstructions = ContextualInstructionsBuilder().apply(block).build()
+        }
+
         public fun build(): KoogComposeContext<S> = KoogComposeContext(
-            providerConfig = providerConfig
+            providerConfig          = providerConfig
                 ?: error("koog-compose: provider { } block is required."),
-            promptStack = promptStack,
-            toolRegistry = toolRegistry,
-            phaseRegistry = phaseRegistry,
-            activePhaseName = activePhaseName,
-            eventHandlers = eventHandlers,
-            stateStore = stateStore,
-            config = config
+            promptStack             = promptStack,
+            toolRegistry            = toolRegistry,
+            phaseRegistry           = phaseRegistry,
+            activePhaseName         = activePhaseName,
+            eventHandlers           = eventHandlers,
+            stateStore              = stateStore,
+            config                  = config,
+            contextualInstructions  = contextualInstructions,
         )
     }
 
@@ -358,6 +428,8 @@ public data class KoogComposeContext<S>(
             Builder<S>().apply(block).build()
     }
 }
+
+
 
 // Stateless sessions (no shared state needed)
 @JvmName("koogComposeStateless")

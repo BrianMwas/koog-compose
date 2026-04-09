@@ -37,7 +37,7 @@ public data class PendingConfirmation(
 /**
  * Manages tool execution permissions and user confirmations.
  */
-public class PermissionManager internal constructor(
+public class PermissionManager(
     private val auditLogger: AuditLogger,
     private val requireConfirmationForSensitive: Boolean = true,
     private val userId: String? = null

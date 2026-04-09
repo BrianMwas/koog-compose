@@ -10,43 +10,76 @@ import kotlinx.coroutines.flow.StateFlow
  * `rememberChatState` accepts any [KoogSessionHandle] — the Compose layer
  * never needs to know whether it is talking to one agent or many.
  *
- * ```kotlin
- * // Single-agent
- * val handle: KoogSessionHandle = PhaseSession(context, executor, "session-id", scope = viewModelScope)
+ * ## State model
+ * The handle exposes a three-layer state model inspired by Scion:
  *
- * // Multi-agent
- * val handle: KoogSessionHandle = SessionRunner(koogSession, executor, "session-id", scope = viewModelScope)
+ *  1. **Lifecycle** — [isRunning]: Boolean. Derived from [activity]. True while
+ *     the agent is actively processing. False when idle or in a sticky terminal state.
  *
- * // Both work identically in Compose
- * val chatState = rememberChatState(handle)
- * ```
+ *  2. **Activity** — [activity]: [AgentActivity]. What the agent is doing:
+ *     Idle, Reasoning, Thinking, Executing, WaitingForInput, Blocked, Completed, Failed.
+ *     Sticky states (Blocked, Completed, Failed) persist until the next [send].
+ *
+ *  3. **Detail** — [activityDetail]: String. Freeform context for the current activity.
+ *     Contents vary by activity:
+ *     - Reasoning    → accumulated reasoning text
+ *     - Thinking     → partial response text
+ *     - Executing    → tool name
+ *     - WaitingForInput → confirmation message
+ *     - Blocked      → fallback message
+ *     - Completed    → final response
+ *     - Failed       → error message
  */
 public interface KoogSessionHandle {
 
     /** Stable conversation identifier. */
     public val sessionId: String
 
-    /** True while the agent is processing a turn. */
+    /**
+     * Current cognitive activity of the agent.
+     * Sticky states ([AgentActivity.Blocked], [AgentActivity.Completed],
+     * [AgentActivity.Failed]) persist until the next [send].
+     */
+    public val activity: StateFlow<AgentActivity>
+
+    /**
+     * Freeform detail string for the current [activity].
+     * See [KoogSessionHandle] kdoc for contents by activity type.
+     */
+    public val activityDetail: StateFlow<String>
+
+    /**
+     * True while the agent is actively processing a turn.
+     * Derived from [activity] — convenience for existing code that checks isRunning.
+     */
     public val isRunning: StateFlow<Boolean>
 
-    /** Non-null when the last turn failed after all retry attempts. Clears on the next [send]. */
+    /**
+     * Non-null when the last turn failed after all retry attempts.
+     * Prefer observing [activity] as [AgentActivity.Failed] instead — this is
+     * kept for backward compatibility.
+     */
     public val error: StateFlow<Throwable?>
 
     /**
      * Token-by-token stream of the agent's current response.
-     * Emits nothing between turns. Collect in a streaming UI component.
+     * During [AgentActivity.Reasoning], emits reasoning tokens.
+     * During [AgentActivity.Thinking], emits visible response tokens.
+     * Emits nothing between turns.
      */
     public val responseStream: Flow<String>
 
     /**
      * Sends a user message and starts a new agent turn.
-     * Returns immediately — observe [isRunning] and [responseStream] for progress.
+     * Clears any sticky activity state ([Blocked], [Completed], [Failed])
+     * before starting the new turn.
+     * Returns immediately — observe [activity] and [responseStream] for progress.
      */
     public fun send(userMessage: String)
 
     /**
-     * Clears persisted session state and resets the runtime to its initial configuration.
-     * The next [send] starts a fresh conversation.
+     * Clears persisted session state and resets the runtime to its initial
+     * configuration. The next [send] starts a fresh conversation.
      */
     public fun reset()
 }

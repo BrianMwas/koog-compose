@@ -3,6 +3,7 @@ package io.github.koogcompose.session
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.model.PromptExecutor
 import io.github.koogcompose.event.EventHandlers
+import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
 import io.github.koogcompose.tool.HandoffTool
 import io.github.koogcompose.tool.HandoffContext
@@ -17,27 +18,17 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import ai.koog.agents.chatMemory.feature.ChatMemory
+import kotlin.time.Clock
 
 /**
  * Multi-agent runtime for a [KoogSession].
  *
- * Owns the agent-swap lifecycle: receives user messages, runs the active agent,
- * detects handoff tool calls, and activates the target specialist.
+ * Exposes the same three-layer activity state model as [PhaseSession]:
+ * [activity], [activityDetail], and derived [isRunning].
  *
- * History threading:
- * - continueHistory = true  → specialist shares the base [sessionId], so [ChatMemory]
- *   gives it the full conversation history.
- * - continueHistory = false → specialist receives a derived ID ("$sessionId:agentName"),
- *   so [ChatMemory] gives it a clean context window. The provider for that derived ID
- *   is created fresh, and its history is wiped before the first turn so the specialist
- *   truly starts empty even if the slot was previously used.
- *
- * Handoff detection:
- * - Moved from regex-on-response-text to tool-name interception at agent-build time.
- * - [EventHandlers] passed to [PhaseAwareAgent.create] fires [onToolExecuted] when the
- *   Koog EventHandler feature reports a tool call completing. The handoff target is
- *   captured there and consumed at the top of the next hop in [runTurn].
+ * On handoff, activity transitions through Executing("handoff_to_x") and
+ * then resets to Thinking when the specialist agent takes over, so the UI
+ * always reflects which agent is active and what it is doing.
  */
 public class SessionRunner<S>(
     internal val session: KoogSession<S>,
@@ -45,15 +36,22 @@ public class SessionRunner<S>(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
 ) : KoogSessionHandle {
 
-    // Build the executor once from the session's configured provider.
-    // KoogAIProvider wraps KoogComposeContext and implements PromptExecutor directly,
-    // so we construct a minimal context for the main agent and cast its provider.
-    // This keeps PromptExecutor out of the public multiAgentHandle API so callers
-    // don't need a direct koog-agents-core dependency.
+    // Build executor once from the session's main agent context.
     private val executor: PromptExecutor =
         session.contextFor(session.mainAgent).createProvider() as PromptExecutor
 
-    // ── Observable UI state ────────────────────────────────────────────────
+    // ── Activity state ─────────────────────────────────────────────────────
+
+    private val _activity = MutableStateFlow<AgentActivity>(AgentActivity.Idle)
+    override val activity: StateFlow<AgentActivity> = _activity.asStateFlow()
+
+    private val _activityDetail = MutableStateFlow("")
+    override val activityDetail: StateFlow<String> = _activityDetail.asStateFlow()
+
+    private val _isRunningDerived = MutableStateFlow(false)
+    override val isRunning: StateFlow<Boolean> = _isRunningDerived.asStateFlow()
+
+    // ── Other observable state ─────────────────────────────────────────────
 
     private val _activeAgentName = MutableStateFlow(session.mainAgent.name)
     public val activeAgentName: StateFlow<String> = _activeAgentName.asStateFlow()
@@ -69,9 +67,6 @@ public class SessionRunner<S>(
     private val _turnId = MutableStateFlow(0)
     public val turnId: StateFlow<Int> = _turnId.asStateFlow()
 
-    private val _isRunning = MutableStateFlow(false)
-    override val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
-
     private val _error = MutableStateFlow<Throwable?>(null)
     override val error: StateFlow<Throwable?> = _error.asStateFlow()
 
@@ -84,21 +79,28 @@ public class SessionRunner<S>(
 
     private var activeAgent: AIAgent<String, String>? = null
     private var activeDefinition: KoogAgentDefinition = session.mainAgent
-
-    // The history session ID used for the current active agent.
-    // Normally equals sessionId, but diverges when continueHistory=false triggers a swap.
     private var activeHistorySessionId: String = sessionId
-
-    // Handoff target set by onToolExecuted() during a turn, consumed at the top of
-    // the next hop. Using a field rather than a return value keeps runTurn() clean
-    // and avoids threading the signal through agent.run()'s return value.
     private var pendingHandoffTarget: String? = null
+    private var reasoningBuffer = StringBuilder()
+
+    init {
+        scope.launch {
+            _activity.collect { _isRunningDerived.value = it.isRunning }
+        }
+    }
 
     // ── KoogSessionHandle ──────────────────────────────────────────────────
 
     override fun send(userMessage: String) {
         scope.launch {
-            _isRunning.value = true
+            // Clear sticky states before starting a new turn.
+            if (_activity.value.isSticky) {
+                _activity.value = AgentActivity.Idle
+                _activityDetail.value = ""
+            }
+
+            _activity.value = AgentActivity.Thinking
+            _activityDetail.value = ""
             _error.value = null
             _turnId.value += 1
 
@@ -108,6 +110,8 @@ public class SessionRunner<S>(
 
             repeat(retryPolicy.maxAttempts) { attempt ->
                 if (lastError != null) {
+                    _activity.value = AgentActivity.Thinking
+                    _activityDetail.value = ""
                     delay(delayMs)
                     delayMs *= 2
                 }
@@ -124,8 +128,11 @@ public class SessionRunner<S>(
                 }
             }
 
-            if (lastError != null) _error.value = lastError
-            _isRunning.value = false
+            if (lastError != null) {
+                _error.value = lastError
+                _activity.value = AgentActivity.Failed(lastError!!)
+                _activityDetail.value = lastError!!.message ?: "Unknown error"
+            }
         }
     }
 
@@ -136,11 +143,14 @@ public class SessionRunner<S>(
             activeDefinition = session.mainAgent
             activeHistorySessionId = sessionId
             pendingHandoffTarget = null
+            reasoningBuffer.clear()
             _activeAgentName.value = session.mainAgent.name
             _currentPhase.value = session.mainAgent.phaseRegistry.initialPhase?.name ?: ""
             _lastResponse.value = null
             _error.value = null
             _turnId.value = 0
+            _activity.value = AgentActivity.Idle
+            _activityDetail.value = ""
         }
     }
 
@@ -153,43 +163,41 @@ public class SessionRunner<S>(
         while (hopsRemaining-- > 0) {
             val agent = requireNotNull(activeAgent) { "Agent not initialised." }
 
-            // pendingHandoffTarget is set by onToolExecuted() which fires during agent.run()
-            // via the EventHandler feature installed in buildAgent(). Clear it before
-            // each hop so a stale value from a previous hop cannot cause a spurious swap.
             pendingHandoffTarget = null
 
             val response = agent.run(input, activeHistorySessionId)
             _lastResponse.value = response
 
-            // Consume whatever handoff the agent signalled during this hop.
-            val handoffName = pendingHandoffTarget ?: return  // no handoff → normal response
+            val handoffName = pendingHandoffTarget ?: run {
+                // No handoff — turn completed cleanly.
+                _activity.value = AgentActivity.Completed(response)
+                _activityDetail.value = response
+                return
+            }
             pendingHandoffTarget = null
 
             val targetDefinition = session.findAgent(handoffName)
-                ?: error(
-                    "koog-compose: Handoff target '$handoffName' is not registered. " +
-                            "Add it via agents($handoffName) in your koogSession { } block."
-                )
+                ?: error("koog-compose: Handoff target '$handoffName' not registered.")
 
             val handoffTool = findHandoffTool(activeDefinition, handoffName)
             handoffTool?.onHandoff?.invoke(HandoffContext(session.stateStore))
 
             val continueHistory = handoffTool?.continueHistory ?: true
+            val historyId = if (continueHistory) sessionId
+            else "$sessionId:${targetDefinition.name}"
 
-            val historyId = if (continueHistory) {
-                sessionId
-            } else {
-                "$sessionId:${targetDefinition.name}"
-            }
-
-            // If the specialist gets a clean slate, wipe its history slot before the
-            // first turn so it doesn't pick up leftovers from a previous activation.
             if (!continueHistory) {
                 SessionStoreChatHistoryProvider(session.store, historyId).clearHistory()
             }
 
             activeHistorySessionId = historyId
             swapAgent(definition = targetDefinition, historySessionId = historyId)
+
+            // After swap, reset to Thinking for the specialist's turn.
+            _activity.value = AgentActivity.Thinking
+            _activityDetail.value = ""
+            reasoningBuffer.clear()
+
             input = userMessage
         }
 
@@ -199,27 +207,69 @@ public class SessionRunner<S>(
         )
     }
 
-    // ── Handoff detection ──────────────────────────────────────────────────
+    // ── Activity event bridge ──────────────────────────────────────────────
 
-    /**
-     * Called by the [EventHandlers] wired into [buildAgent] whenever a tool
-     * execution completes. If the tool name matches the handoff prefix pattern
-     * we record the target agent name so [runTurn] can act on it after [agent.run]
-     * returns.
-     *
-     * This replaces the previous regex-on-response-text approach which was broken
-     * because:
-     * 1. [HandoffTool.execute] returns "Handing off to $name..." — not "handoff_to_$name".
-     *    The regex pattern `handoff_to_(\w+)` would never match that text.
-     * 2. Response text is assembled from streaming tokens and may not be complete
-     *    when detection was attempted.
-     *
-     * Tool names are deterministic: [handoffToolName] always produces "handoff_to_$name",
-     * so prefix matching here is exact and race-free.
-     */
     private fun onToolExecuted(toolName: String) {
         if (toolName.startsWith("handoff_to_")) {
             pendingHandoffTarget = toolName.removePrefix("handoff_to_")
+        }
+    }
+
+    private suspend fun handleActivityEvent(event: KoogEvent) {
+        when (event) {
+            is KoogEvent.ReasoningStarted -> {
+                reasoningBuffer.clear()
+                _activity.value = AgentActivity.Reasoning
+                _activityDetail.value = ""
+            }
+            is KoogEvent.ReasoningDelta -> {
+                reasoningBuffer.append(event.token)
+                _activityDetail.value = reasoningBuffer.toString()
+            }
+            is KoogEvent.ReasoningCompleted -> {
+                _activity.value = AgentActivity.Thinking
+                _activityDetail.value = ""
+                reasoningBuffer.clear()
+            }
+            is KoogEvent.ProviderChunkReceived -> {
+                when (event.chunk) {
+                    is AIResponseChunk.TextDelta -> {
+                        if (_activity.value is AgentActivity.Reasoning) {
+                            _activity.value = AgentActivity.Thinking
+                        }
+                        _activityDetail.value = (_activityDetail.value) + event.chunk.text
+                    }
+                    is AIResponseChunk.ReasoningDelta -> {
+                        if (_activity.value !is AgentActivity.Reasoning) {
+                            reasoningBuffer.clear()
+                            _activity.value = AgentActivity.Reasoning
+                        }
+                        reasoningBuffer.append(event.chunk.text)
+                        _activityDetail.value = reasoningBuffer.toString()
+                    }
+                    else -> Unit
+                }
+            }
+            is KoogEvent.ToolCallRequested -> {
+                _activity.value = AgentActivity.Executing(event.toolName)
+                _activityDetail.value = event.toolName
+            }
+            is KoogEvent.ToolConfirmationRequested -> {
+                _activity.value = AgentActivity.WaitingForInput
+                _activityDetail.value = event.confirmationMessage
+            }
+            is KoogEvent.ToolExecutionCompleted -> {
+                onToolExecuted(event.toolName)
+                if (_activity.value is AgentActivity.Executing
+                    || _activity.value is AgentActivity.WaitingForInput) {
+                    _activity.value = AgentActivity.Thinking
+                    _activityDetail.value = ""
+                }
+            }
+            is KoogEvent.PhaseTransitioned -> {
+                _currentPhase.value = event.toPhaseName
+            }
+            else -> Unit
         }
     }
 
@@ -230,10 +280,7 @@ public class SessionRunner<S>(
         activeAgent = buildAgent(definition, activeHistorySessionId)
     }
 
-    private fun swapAgent(
-        definition: KoogAgentDefinition,
-        historySessionId: String,
-    ) {
+    private fun swapAgent(definition: KoogAgentDefinition, historySessionId: String) {
         activeDefinition = definition
         _activeAgentName.value = definition.name
         _currentPhase.value = definition.phaseRegistry.initialPhase?.name ?: ""
@@ -246,13 +293,11 @@ public class SessionRunner<S>(
     ): AIAgent<String, String> {
         val context = session.contextFor(definition)
 
-        // Merge session-level event handlers with the tool-execution hook needed
-        // for handoff detection. We build a new EventHandlers that dispatches both.
         val agentEventHandlers = EventHandlers {
-            // Forward all session-level handlers.
-            onEvent { event -> session.eventHandlers.dispatch(event) }
-            // Intercept tool completions to detect handoff calls.
-            onToolExecutionCompleted { event -> onToolExecuted(event.toolName) }
+            onEvent { event ->
+                handleActivityEvent(event)
+                session.eventHandlers.dispatch(event)
+            }
         }
 
         return PhaseAwareAgent.create(
@@ -267,8 +312,6 @@ public class SessionRunner<S>(
             coroutineScope = scope,
         )
     }
-
-    // ── Helpers ────────────────────────────────────────────────────────────
 
     private fun findHandoffTool(
         definition: KoogAgentDefinition,

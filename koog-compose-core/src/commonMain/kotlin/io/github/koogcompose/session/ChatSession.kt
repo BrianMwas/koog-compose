@@ -129,7 +129,7 @@ public data class ChatSessionState(
  * Manages a single chat conversation and the tool/phase loop around it.
  */
 public open class ChatSession(
-    public val initialContext: KoogComposeContext<*>,
+    public open val initialContext: KoogComposeContext<*>,
     private val provider: AIProvider,
     private val scope: CoroutineScope,
     private val userId: String? = null,
@@ -151,16 +151,16 @@ public open class ChatSession(
     private val _state = MutableStateFlow(
         ChatSessionState(activePhaseName = startingContext.activePhaseName)
     )
-    public val state: StateFlow<ChatSessionState> = _state.asStateFlow()
+    public open val state: StateFlow<ChatSessionState> = _state.asStateFlow()
 
     private val _chunks = MutableSharedFlow<AIResponseChunk>(extraBufferCapacity = 256)
     public val chunks: SharedFlow<AIResponseChunk> = _chunks.asSharedFlow()
 
     private val _events = MutableSharedFlow<KoogEvent>(extraBufferCapacity = 128)
-    public val events: SharedFlow<KoogEvent> = _events.asSharedFlow()
+    public open val events: SharedFlow<KoogEvent> = _events.asSharedFlow()
 
     public val auditLogger: AuditLogger = AuditLogger()
-    public val permissionManager: PermissionManager = PermissionManager(
+    public open val permissionManager: PermissionManager = PermissionManager(
         auditLogger = auditLogger,
         requireConfirmationForSensitive = startingContext.config.requireConfirmationForSensitive,
         userId = userId,
@@ -169,7 +169,7 @@ public open class ChatSession(
     private var activeJob: Job? = null
     private val rateLimiter = RateLimiter(startingContext.config.rateLimitPerMinute)
 
-    public fun send(text: String, attachments: List<Attachment> = emptyList()): Unit {
+    public open fun send(text: String, attachments: List<Attachment> = emptyList()): Unit {
         if (text.isBlank() && attachments.isEmpty()) {
             return
         }
@@ -196,7 +196,7 @@ public open class ChatSession(
         }
     }
 
-    public fun cancel(): Unit {
+    public open fun cancel(): Unit {
         activeJob?.cancel()
         activeJob = null
         permissionManager.clearPending()
@@ -205,7 +205,7 @@ public open class ChatSession(
         }
     }
 
-    public fun regenerate(): Unit {
+    public open fun regenerate(): Unit {
         val messages = _state.value.messages
         val lastUserIndex = messages.indexOfLast { message -> message.role == MessageRole.USER }
         if (lastUserIndex == -1) {
@@ -225,20 +225,20 @@ public open class ChatSession(
         send(lastUser.content, lastUser.attachments)
     }
 
-    public fun clearHistory(): Unit {
+    public open fun clearHistory(): Unit {
         cancel()
         _state.update {
             ChatSessionState(activePhaseName = _currentContext.value.activePhaseName)
         }
     }
 
-    public suspend fun confirmPendingToolExecution(): ToolResult =
+    public open suspend fun confirmPendingToolExecution(): ToolResult =
         permissionManager.onUserConfirmed()
 
-    public suspend fun denyPendingToolExecution(): ToolResult =
+    public open suspend fun denyPendingToolExecution(): ToolResult =
         permissionManager.onUserDenied()
 
-    public fun withContext(additionalContext: String): ChatSession =
+    public open fun withContext(additionalContext: String): ChatSession =
         ChatSession(
             initialContext = _currentContext.value.withSessionContext(additionalContext),
             provider = provider,
@@ -249,7 +249,7 @@ public open class ChatSession(
             session._state.value = _state.value
         }
 
-    public fun close(): Unit {
+    public open fun close(): Unit {
         activeJob?.cancel()
         activeJob = null
         permissionManager.clearPending()

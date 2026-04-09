@@ -4,6 +4,7 @@ import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.provider.AIProvider
 import io.github.koogcompose.security.AuditLogger
 import io.github.koogcompose.security.PermissionManager
+import io.github.koogcompose.session.AgentActivity
 import io.github.koogcompose.session.Attachment
 import io.github.koogcompose.session.ChatMessage
 import io.github.koogcompose.session.ChatSession
@@ -12,6 +13,7 @@ import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.KoogSessionHandle
 import io.github.koogcompose.session.MessageRole
 import io.github.koogcompose.session.MessageState
+import io.github.koogcompose.session.isRunning
 import io.github.koogcompose.tool.ToolResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -22,49 +24,39 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlin.time.Clock
 
 /**
  * Adapts a [KoogSessionHandle] into the [ChatSession] interface that [ChatState] requires.
  *
- * [ChatState] is constructed with a [ChatSession] + [CoroutineScope]. Rather than
- * changing [ChatState]'s constructor or adding a second code path through it, we
- * implement the minimal [ChatSession] surface that [ChatState] and the UI components
- * actually use:
+ * Maps [AgentActivity] to [ChatSessionState] so the UI reflects the full
+ * three-layer state model without any changes to [ChatState] or the UI components.
  *
- *  - [state]              → [ChatSessionState] built from accumulated messages
- *  - [events]             → forwarded from [handle.responseStream] lifecycle observations
- *  - [permissionManager]  → stub (handle runtime manages its own tool permissions)
- *  - [send]               → optimistically appends user message, delegates to [handle.send]
- *  - [cancel]             → no-op (handle has no cancel; call [reset] to abort)
- *  - [regenerate]         → not supported on handle runtime
- *  - [clearHistory]       → clears local message list and calls [handle.reset]
- *  - [close]              → no-op (scope lifecycle is owned by the caller)
- *
- * Message accumulation strategy:
- *  1. User messages are appended immediately in [send] (optimistic).
- *  2. A streaming assistant placeholder is created and updated token-by-token
- *     via [handle.responseStream].
- *  3. When [handle.isRunning] transitions false→false after a running→true→false
- *     cycle, the streaming placeholder is finalised into a complete message.
+ * Activity → ChatSessionState mapping:
+ * - [AgentActivity.Reasoning]       → isStreaming=true, streamingContent="" (shimmer, no text yet)
+ * - [AgentActivity.Thinking]        → isStreaming=true, streamingContent=partial response
+ * - [AgentActivity.Executing]       → isStreaming=true, streamingContent=tool name
+ * - [AgentActivity.WaitingForInput] → isStreaming=false (agent paused, waiting for user)
+ * - [AgentActivity.Blocked]         → isStreaming=false, error=fallback message
+ * - [AgentActivity.Completed]       → isStreaming=false
+ * - [AgentActivity.Failed]          → isStreaming=false, error=error message
+ * - [AgentActivity.Idle]            → isStreaming=false
  */
 internal class HandleBackedChatSession(
     private val handle: KoogSessionHandle,
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     override val initialContext: KoogComposeContext<*>,
-    provider: AIProvider = initialContext.createProvider(),
+    private val provider: AIProvider = initialContext.createProvider(),
 ) : ChatSession(
     initialContext = initialContext,
     provider       = provider,
     scope          = scope,
 ) {
-    // We override every property and method that [ChatState] uses, so the super
-    // class constructor runs but its internal loops are never started.
-    // This is safe because [ChatSession] starts its coroutines lazily on [send].
+    private fun currentTimeMs(): Long {
+        return Clock.System.now().toEpochMilliseconds()
+    }
 
     private val _messages = MutableStateFlow<List<ChatMessage>>(emptyList())
-
-    // The id of the assistant bubble currently being streamed into.
-    // Null when no turn is in flight.
     private var streamingMessageId: String? = null
 
     private val _state = MutableStateFlow(ChatSessionState())
@@ -73,14 +65,10 @@ internal class HandleBackedChatSession(
     private val _events = MutableSharedFlow<KoogEvent>(extraBufferCapacity = 128)
     override val events: SharedFlow<KoogEvent> = _events.asSharedFlow()
 
-    // Stub permission manager — the handle runtime enforces tool permissions internally.
-    // ChatState.confirmToolExecution / denyToolExecution delegate to this, so it must
-    // exist, but the actual confirmation dialog lifecycle is driven by KoogEvent.ToolConfirmationRequested
-    // emitted into [events] and handled by ConfirmationObserver in the UI.
     override val permissionManager: PermissionManager = PermissionManager(
-        auditLogger                    = AuditLogger(),
+        auditLogger                     = AuditLogger(),
         requireConfirmationForSensitive = false,
-        userId                         = null,
+        userId                          = null,
     )
 
     init {
@@ -94,42 +82,55 @@ internal class HandleBackedChatSession(
                         else msg
                     }
                 }
-                syncState(isStreaming = true)
+                syncState()
             }
         }
 
-        // ── isRunning transitions → create / finalise the assistant bubble ────
+        // ── Activity transitions → drive ChatSessionState ─────────────────────
         scope.launch {
-            var wasRunning = false
-            handle.isRunning.collect { running ->
-                when {
-                    running && !wasRunning -> {
-                        // Turn started: create a blank streaming placeholder.
-                        val id = "a-${currentTimeMs()}"
-                        streamingMessageId = id
-                        _messages.update { list ->
-                            list + ChatMessage(
-                                id          = id,
-                                role        = MessageRole.ASSISTANT,
-                                content     = "",
-                                state       = MessageState.STREAMING,
-                                timestampMs = currentTimeMs(),
-                            )
+            handle.activity.collect { activity ->
+                when (activity) {
+                    is AgentActivity.Thinking, AgentActivity.Reasoning -> {
+                        // Ensure a streaming message placeholder exists.
+                        if (streamingMessageId == null) {
+                            val id = "a-${currentTimeMs()}"
+                            streamingMessageId = id
+                            _messages.update { list ->
+                                list + ChatMessage(
+                                    id          = id,
+                                    role        = MessageRole.ASSISTANT,
+                                    content     = "",
+                                    state       = MessageState.STREAMING,
+                                    timestampMs = currentTimeMs(),
+                                )
+                            }
                         }
-                        syncState(isStreaming = true)
+                        syncState()
                         _events.tryEmit(
                             KoogEvent.TurnStarted(
-                                timestampMs    = currentTimeMs(),
-                                turnId         = id,
-                                phaseName      = null,
-                                userMessageId  = "",
-                                text           = "",
+                                timestampMs     = currentTimeMs(),
+                                turnId          = streamingMessageId ?: "",
+                                phaseName       = null,
+                                userMessageId   = "",
+                                text            = "",
                                 attachmentCount = 0,
                             )
                         )
                     }
-                    !running && wasRunning -> {
-                        // Turn complete: finalise the streaming message.
+
+                    is AgentActivity.Executing -> {
+                        // Tool in flight — keep the streaming placeholder alive,
+                        // update streamingContent with the tool name so the UI
+                        // can show "Running: toolName" if desired.
+                        syncState()
+                    }
+
+                    is AgentActivity.WaitingForInput -> {
+                        // Agent paused — stop the streaming indicator.
+                        syncState()
+                    }
+
+                    is AgentActivity.Completed -> {
                         val msgId = streamingMessageId
                         streamingMessageId = null
                         if (msgId != null) {
@@ -140,7 +141,7 @@ internal class HandleBackedChatSession(
                                 }
                             }
                         }
-                        syncState(isStreaming = false)
+                        syncState()
                         _events.tryEmit(
                             KoogEvent.TurnCompleted(
                                 timestampMs        = currentTimeMs(),
@@ -151,34 +152,37 @@ internal class HandleBackedChatSession(
                             )
                         )
                     }
-                }
-                wasRunning = running
-            }
-        }
 
-        // ── Error propagation ─────────────────────────────────────────────────
-        scope.launch {
-            handle.error.collect { error ->
-                if (error != null) {
-                    val msgId = streamingMessageId
-                    streamingMessageId = null
-                    if (msgId != null) {
-                        _messages.update { list ->
-                            list.map { msg ->
-                                if (msg.id == msgId) msg.copy(state = MessageState.ERROR)
-                                else msg
+                    is AgentActivity.Failed -> {
+                        val msgId = streamingMessageId
+                        streamingMessageId = null
+                        if (msgId != null) {
+                            _messages.update { list ->
+                                list.map { msg ->
+                                    if (msg.id == msgId) msg.copy(state = MessageState.ERROR)
+                                    else msg
+                                }
                             }
                         }
-                    }
-                    _state.update { it.copy(error = error.message, isStreaming = false) }
-                    _events.tryEmit(
-                        KoogEvent.TurnFailed(
-                            timestampMs = currentTimeMs(),
-                            turnId      = msgId ?: "",
-                            phaseName   = null,
-                            message     = error.message ?: "Unknown error",
+                        syncState()
+                        _events.tryEmit(
+                            KoogEvent.TurnFailed(
+                                timestampMs = currentTimeMs(),
+                                turnId      = msgId ?: "",
+                                phaseName   = null,
+                                message     = activity.error.message ?: "Unknown error",
+                            )
                         )
-                    )
+                    }
+
+                    is AgentActivity.Blocked -> {
+                        streamingMessageId = null
+                        syncState()
+                    }
+
+                    AgentActivity.Idle -> {
+                        syncState()
+                    }
                 }
             }
         }
@@ -188,8 +192,6 @@ internal class HandleBackedChatSession(
 
     override fun send(text: String, attachments: List<Attachment>) {
         if (text.isBlank() && attachments.isEmpty()) return
-
-        // Optimistically append the user message before the round-trip.
         _messages.update { list ->
             list + ChatMessage(
                 id          = "u-${currentTimeMs()}",
@@ -200,36 +202,27 @@ internal class HandleBackedChatSession(
                 timestampMs = currentTimeMs(),
             )
         }
-        syncState(isStreaming = false)
-
+        syncState()
         handle.send(text)
     }
 
     override fun cancel() {
-        // PhaseSession / SessionRunner have no cancellation surface exposed via
-        // KoogSessionHandle. Clearing the streaming state locally is the best we can do.
         streamingMessageId = null
-        syncState(isStreaming = false)
+        syncState()
     }
 
-    override fun regenerate() {
-        // Not supported on the handle runtime — handle has no concept of regeneration.
-        // Silently ignored to avoid crashing if a UI component calls it.
-    }
+    override fun regenerate() { /* not supported on handle runtime */ }
 
     override fun clearHistory() {
         _messages.value = emptyList()
         streamingMessageId = null
-        syncState(isStreaming = false)
+        syncState()
         handle.reset()
     }
 
     override fun withContext(additionalContext: String): ChatSession = this
 
-    override fun close() {
-        // Scope lifecycle is owned by the Composable via rememberCoroutineScope().
-        // We don't cancel it here.
-    }
+    override fun close() { /* scope lifecycle owned by rememberCoroutineScope() */ }
 
     override suspend fun confirmPendingToolExecution(): ToolResult =
         permissionManager.onUserConfirmed()
@@ -237,14 +230,26 @@ internal class HandleBackedChatSession(
     override suspend fun denyPendingToolExecution(): ToolResult =
         permissionManager.onUserDenied()
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
+    // ── State sync ────────────────────────────────────────────────────────────
 
-    private fun syncState(isStreaming: Boolean) {
+    private fun syncState() {
+        val activity = handle.activity.value
+        val detail   = handle.activityDetail.value
+
         _state.value = ChatSessionState(
             messages         = _messages.value,
-            isStreaming      = isStreaming,
-            streamingContent = if (isStreaming) _messages.value.lastOrNull()?.content ?: "" else "",
-            error            = handle.error.value?.message,
+            isStreaming      = activity.isRunning,
+            streamingContent = when (activity) {
+                is AgentActivity.Thinking        -> detail
+                is AgentActivity.Executing       -> detail
+                is AgentActivity.Reasoning       -> ""  // shimmer only, no text
+                else                             -> ""
+            },
+            error            = when (activity) {
+                is AgentActivity.Failed  -> activity.error.message
+                is AgentActivity.Blocked -> detail
+                else                     -> null
+            },
         )
     }
 }
