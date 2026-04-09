@@ -45,6 +45,8 @@ public data class AgentSession(
     val serializedState: String? = null,
     /** App-level context variables (key-value pairs). */
     val contextVars: Map<String, String> = emptyMap(),
+    /** Tool call frequency counts. Keyed by tool name, value is call count for this session. */
+    val toolCallCounts: Map<String, Int> = emptyMap(),
     val createdAt: Long,
     val updatedAt: Long
 )

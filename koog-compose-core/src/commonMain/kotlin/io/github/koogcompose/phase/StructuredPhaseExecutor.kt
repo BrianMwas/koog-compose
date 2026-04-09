@@ -33,15 +33,42 @@ internal class StructuredPhaseExecutor<O>(
     suspend fun executeStructured(basePrompt: Prompt): O {
         val primedPrompt = basePrompt.withStructureHint(output)
         var lastError: Exception? = null
+        // Accumulate messages across retry attempts so the LLM sees
+        // its previous failed output and the correction request.
+        val accumulatedMessages = mutableListOf<Message.Response>()
 
-        repeat(output.retries) {
+        repeat(output.retries) { retryIndex ->
             try {
-                val responses = delegate.execute(primedPrompt, model)
-                val raw = responses
-                    .filterIsInstance<Message.Assistant>()
-                    .joinToString("") { it.content }
+                val promptToUse = if (accumulatedMessages.isEmpty()) {
+                    primedPrompt
+                } else {
+                    // On retry, build a prompt that includes the history
+                    // so the LLM sees its previous attempt and the error.
+                    primedPrompt.copy(messages = primedPrompt.messages + accumulatedMessages)
+                }
+
+                val responses = delegate.execute(promptToUse, model)
+                val assistantMessages = responses.filterIsInstance<Message.Assistant>()
+                val raw = assistantMessages.joinToString("") { it.content }
+
+                // Store this attempt in history for potential retries.
+                accumulatedMessages.addAll(assistantMessages)
+
                 return output.parse(raw)
-            } catch (e: Exception) { lastError = e }
+            } catch (e: Exception) {
+                lastError = e
+                // On validation failure, append a user message with the
+                // error so the LLM can self-correct on the next attempt.
+                if (e.message?.startsWith("Validation failed:") == true) {
+                    accumulatedMessages.add(
+                        Message.User(
+                            "Your previous output was invalid. Error: ${e.message}\n" +
+                                    "Please output only valid JSON matching the schema.",
+                            ai.koog.prompt.message.RequestMetaInfo.create(kotlin.time.Clock.System)
+                        )
+                    )
+                }
+            }
         }
         throw IllegalStateException(
             "Structured output failed after ${output.retries} attempts: ${lastError?.message}",
@@ -82,7 +109,7 @@ internal class StructuredPhaseExecutor<O>(
 /** Appends schema + examples to the system block, creating one if absent. */
 private fun <O> Prompt.withStructureHint(output: PhaseOutput<O>): Prompt {
     val hint = buildString {
-        appendLine("\n## Required output format")
+        appendLine("\n## Required output format (schema v${output.version})")
         appendLine("Respond ONLY with a JSON object matching this schema:")
         appendLine(Json.encodeToString(output.structure.schema.schema))
         val examples = output.structure.examples

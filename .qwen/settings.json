@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "WebFetch(docs.koog.ai)"
+      "WebFetch(docs.koog.ai)",
+      "WebSearch"
     ]
-  }
+  },
+  "$version": 3
 }

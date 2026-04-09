@@ -91,6 +91,9 @@ public class PhaseSession<S>(
     private val _responseStream = MutableSharedFlow<String>(extraBufferCapacity = 64)
     override val responseStream: Flow<String> = _responseStream.asSharedFlow()
 
+    private val _toolCallCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    public val toolCallCounts: StateFlow<Map<String, Int>> = _toolCallCounts.asStateFlow()
+
     public val appState: StateFlow<S>? = context.stateStore?.stateFlow
 
     // ── Stuck detection tracking ───────────────────────────────────────────
@@ -221,6 +224,7 @@ public class PhaseSession<S>(
             _lastResponse.value = null
             _error.value = null
             _turnId.value = 0
+            _toolCallCounts.value = emptyMap()
             _activity.value = AgentActivity.Idle
             _activityDetail.value = ""
             lastPhaseInput = null
@@ -289,6 +293,10 @@ public class PhaseSession<S>(
             }
             is KoogEvent.ToolExecutionCompleted -> {
                 // Tool done — back to Thinking for the next LLM pass.
+                // Track tool call count for analytics and loop detection.
+                _toolCallCounts.value = _toolCallCounts.value.toMutableMap().apply {
+                    this[event.toolName] = (this[event.toolName] ?: 0) + 1
+                }
                 if (_activity.value is AgentActivity.Executing
                     || _activity.value is AgentActivity.WaitingForInput) {
                     _activity.value = AgentActivity.Thinking

@@ -163,26 +163,34 @@ public class PhaseBuilder(
     }
 
     /**
-     * NEW — declares that this phase must return a value of type [O].
+
+     * Declares that this phase must return a value of type [O].
      *
      * Annotate your data class with @LLMDescription on each field —
      * the schema is generated automatically from those annotations.
      *
      * @param retries  parse-retry attempts before surfacing an error
+     * @param version  schema version for evolving output types
      * @param examples injected into the prompt regardless of provider
      *                 type, fixing Koog's native-schema priming bug
+     * @param validate optional validation lambda — return [ValidationResult.Invalid]
+     *                 to trigger a retry with the error fed back to the LLM
      */
     public inline fun <reified O> typedOutput(
         retries: Int = 3,
+        version: Int = 1,
         examples: List<O> = emptyList(),
         descriptionOverrides: Map<String, String> = emptyMap(),
         excludedProperties: Set<String> = emptySet(),
+        noinline validate: (O) -> ValidationResult = { ValidationResult.Valid },
     ) {
         outputStructure = phaseOutput<O>(
             retries = retries,
+            version = version,
             examples = examples,
             descriptionOverrides = descriptionOverrides,
             excludedProperties = excludedProperties,
+            validate = validate,
         )
     }
 

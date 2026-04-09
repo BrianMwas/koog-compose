@@ -29,6 +29,7 @@ import io.github.koogcompose.session.SessionRunnerHandle
 import io.github.koogcompose.session.koogAgent
 import io.github.koogcompose.session.koogSession
 import io.github.koogcompose.session.multiAgentHandle
+import io.github.koogcompose.phase.handoff
 import io.github.koogcompose.tool.handoff
 import io.github.koogcompose.ui.components.ChatInputBar
 import io.github.koogcompose.ui.components.ChatMessageList
@@ -80,17 +81,18 @@ fun MultiAgentSample(
                 }
                 phases {
                     phase("root", initial = true) {
+                        // Register handoff tools so the LLM can call them.
                         // handoff() returns a HandoffTool (a SecureTool).
-                        // PhaseBuilder.tool(SecureTool) registers it directly.
+                        // PhaseBuilder.tool(SecureTool) registers it in the phase's tool registry.
                         //
-                        // The HandoffBuilder overload is used here (not the () -> String
-                        // overload) because the block sets a property on the receiver,
-                        // making the lambda type unambiguous to the compiler.
-                        tool(handoff(target = focusAgent, description = {
-                             "User asks about focus, productivity, pomodoro, or concentration"
-                        }))
-                        tool(handoff(weatherAgent, description = { "User asks about weather or wants a forecast"
-                        }))
+                        // The PhaseBuilder.handoff() extension is used here — it creates
+                        // the HandoffTool and registers it via tool() internally.
+                        handoff(target = focusAgent, description = {
+                            "User asks about focus, productivity, pomodoro, or concentration"
+                        })
+                        handoff(target = weatherAgent, description =  {
+                            "User asks about weather or wants a forecast"
+                        })
                     }
                 }
             }

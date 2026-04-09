@@ -42,6 +42,7 @@ internal class SessionStoreChatHistoryProvider(
                 messageHistory   = sessionMessages,
                 serializedState  = existing?.serializedState,
                 contextVars      = existing?.contextVars ?: emptyMap(),
+                toolCallCounts   = existing?.toolCallCounts ?: emptyMap(),
                 createdAt        = existing?.createdAt ?: now,
                 updatedAt        = now,
             )
