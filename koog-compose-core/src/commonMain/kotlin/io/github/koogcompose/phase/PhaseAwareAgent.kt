@@ -5,17 +5,18 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.agent.config.AIAgentConfig
 import ai.koog.agents.core.agent.config.MissingToolsConversionStrategy
 import ai.koog.agents.core.agent.config.ToolCallDescriber
+import ai.koog.agents.features.eventHandler.feature.EventHandler
 import ai.koog.agents.snapshot.feature.Persistence
-import ai.koog.agents.snapshot.providers.PersistenceStorageProvider
 import ai.koog.agents.snapshot.providers.file.FilePersistenceStorageProvider
-import ai.koog.agents.core.tools.ToolRegistry as KoogToolRegistry
-
+import ai.koog.agents.snapshot.providers.filters.AgentCheckpointPredicateFilter
 import ai.koog.prompt.dsl.prompt
+import ai.koog.agents.core.tools.ToolRegistry as KoogToolRegistry
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.serialization.kotlinx.KotlinxSerializer
 import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.installKoogEventHandlers
 import io.github.koogcompose.provider.KoogAIProvider
+import io.github.koogcompose.session.CompressionTrigger
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.SessionStore
 import io.github.koogcompose.session.SessionStoreChatHistoryProvider
@@ -24,6 +25,7 @@ import io.github.koogcompose.tool.toKoogTool
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.io.files.Path
 
 /**
  * Creates a single [AIAgent] whose strategy is the multi-phase subgraph pipeline
@@ -47,8 +49,9 @@ import kotlinx.coroutines.flow.MutableSharedFlow
  *
  * 4. **[Persistence]** — captures complete agent state (message history, current
  *    node, input data, timestamps) at each execution point. Supports rollback to
- *    previous checkpoints via [ai.koog.agents.core.agent.feature.persistence.RollbackToolRegistry].
- *    Uses file-based storage by default for cross-session durability.
+ *    previous checkpoints via Koog's snapshot API.
+ *    **Disabled by default** — pass [persistenceStorage] to opt-in for crash recovery.
+ *    All data stays on the user's device.
  *
  * Call `agent.run(userMessage, sessionId)` — the two-arg overload is required
  * for [ChatMemory] to scope history correctly per session.
@@ -65,7 +68,7 @@ public object PhaseAwareAgent {
         eventHandlers: EventHandlers = EventHandlers.Empty,
         currentTurnId: () -> String = { "0" },
         coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
-        persistenceStorage: PersistenceStorageProvider = defaultPersistenceStorage(sessionId),
+        persistenceStorage: FilePersistenceStorageProvider<Path>? = null,
     ): AIAgent<String, String> {
 
         // Resolve [ToolName] refs in all phase instructions before building the strategy.
@@ -118,8 +121,8 @@ public object PhaseAwareAgent {
         // AfterMessages(n) → window of n messages. Otherwise use a safe default.
         val compressionConfig = resolvedContext.config.historyCompression
         val chatMemoryWindowSize: Int? = when (val trigger = compressionConfig?.trigger) {
-            is io.github.koogcompose.session.CompressionTrigger.AfterMessages -> trigger.messageCount
-            is io.github.koogcompose.session.CompressionTrigger.Both -> trigger.messageCount
+            is CompressionTrigger.AfterMessages -> trigger.messageCount
+            is CompressionTrigger.Both -> trigger.messageCount
             else -> null
         }
 
@@ -150,7 +153,7 @@ public object PhaseAwareAgent {
                 // Installed via Koog's EventHandler feature, mapping callbacks to
                 // koog-compose's [KoogEvent] sealed hierarchy.
                 if (eventHandlers !== EventHandlers.Empty) {
-                    install(ai.koog.agents.features.eventHandler.feature.EventHandler) {
+                    install(EventHandler) {
                         installKoogEventHandlers(
                             eventHandlers = eventHandlers,
                             phaseName = {
@@ -162,27 +165,46 @@ public object PhaseAwareAgent {
                     }
                 }
 
-                // ── 4. Persistence — full agent state checkpoints ─────────────────
-                // Captures message history, current node, input data, and timestamps.
-                // Supports rollback via context.persistence().rollbackToCheckpoint().
-                install(Persistence) {
-                    storage = persistenceStorage
-                    enableAutomaticPersistence = true
+                // ── 4. Persistence — full agent state checkpoints (OPT-IN) ───────
+                // Disabled by default. Pass persistenceStorage to enable crash recovery.
+                // When enabled, captures message history, current node, input data,
+                // and timestamps at each execution point.
+                if (persistenceStorage != null) {
+                    install(Persistence) {
+                        storage = persistenceStorage
+                        enableAutomaticPersistence = true
+                    }
                 }
             }
         )
     }
 
     /**
-     * Default persistence storage — file-based for cross-session durability.
+     * Enable file-based persistence for crash recovery.
      *
-     * Checkpoints are stored under `$cacheDir/koog-persistence/$sessionId/`.
-     * Override this by passing a custom [PersistenceStorageProvider] to [create].
+     * Pass a fully-constructed [FilePersistenceStorageProvider] to persist
+     * agent checkpoints to disk. All data stays on the user's device.
+     *
+     * ```kotlin
+     * PhaseAwareAgent.create(
+     *     context = ctx,
+     *     promptExecutor = executor,
+     *     sessionId = "session-1",
+     *     store = store,
+     *     persistenceStorage = myFilePersistenceProvider,  // opt-in
+     * )
+     * ```
      */
-    public fun defaultPersistenceStorage(sessionId: String): PersistenceStorageProvider {
-        val cacheDir = System.getProperty("java.io.tmpdir")
-            ?: System.getProperty("user.home")
-            ?: "/tmp"
-        return FilePersistenceStorageProvider("$cacheDir/koog-persistence/$sessionId")
-    }
+    public fun withPersistence(
+        provider: FilePersistenceStorageProvider<AgentCheckpointPredicateFilter>,
+    ): PhaseAwareAgentCreateConfig =
+        PhaseAwareAgentCreateConfig(persistenceStorage = provider)
 }
+
+/**
+ * Configuration object for [PhaseAwareAgent.create].
+ * Returned by [PhaseAwareAgent.withPersistence] for fluent chaining.
+ */
+public class PhaseAwareAgentCreateConfig internal constructor(
+    internal val persistenceStorage: FilePersistenceStorageProvider<AgentCheckpointPredicateFilter>? = null
+)
