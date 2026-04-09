@@ -17,19 +17,27 @@ public class RoomSessionStore(
             sessionId = sessionId,
             currentPhaseName = sessionEntity.currentPhaseName,
             messageHistory = messageEntities.map { it.toSessionMessage() },
+            serializedState = sessionEntity.serializedState,
             contextVars = contextVarEntities.associate { it.key to it.value },
+            toolCallCounts = sessionEntity.toolCallCountsJson
+                ?.let { Json.decodeFromString<Map<String, Int>>(it) }
+                ?: emptyMap(),
             createdAt = sessionEntity.createdAt,
             updatedAt = sessionEntity.updatedAt
         )
     }
 
     override suspend fun save(sessionId: String, session: AgentSession) {
-        val now = currentTimeMillis() // ✅ KMP-safe, no System.currentTimeMillis()
+        val now = currentTimeMillis()
 
         dao.upsertSession(
             SessionEntity(
                 sessionId = sessionId,
                 currentPhaseName = session.currentPhaseName,
+                serializedState = session.serializedState,
+                toolCallCountsJson = if (session.toolCallCounts.isNotEmpty()) {
+                    Json.encodeToString(session.toolCallCounts)
+                } else null,
                 createdAt = session.createdAt,
                 updatedAt = now
             )

@@ -42,18 +42,10 @@ include(":koog-compose-device")
 include(":koog-compose-testing")
 include(":koog-compose-session-room")
 
-// Android Control Batteries
-include(":koog-compose-android-workmanager")
-// include(":koog-compose-android-alarmmanager")        // Future
-// include(":koog-compose-android-notifications")       // Future
-// include(":koog-compose-android-connectivity")        // Future
-// include(":koog-compose-android-sensors")             // Future
-// include(":koog-compose-android-intents")             // Future
-
-// iOS Control Batteries
-// include(":koog-compose-ios-backgroundtasks")         // Future
-// include(":koog-compose-ios-usernotifications")       // Future
-// include(":koog-compose-ios-healthkit")               // Future
+// Background task batteries (platform-specific implementations live in koog-compose-device)
+// Android: WorkManager (via androidx.work in koog-compose-device:androidMain)
+// iOS: BackgroundTasks (planned)
+// Desktop: ScheduledExecutorService (planned)
 
 // Sample app to test the library locally
 include(":sample-app")

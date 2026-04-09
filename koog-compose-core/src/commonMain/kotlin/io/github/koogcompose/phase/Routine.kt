@@ -1,5 +1,3 @@
-package io.github.koogcompose.phase
-
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.agent.config.AIAgentConfig
 import ai.koog.agents.core.agent.config.MissingToolsConversionStrategy
@@ -10,6 +8,8 @@ import ai.koog.agents.core.tools.ToolRegistry as KoogToolRegistry
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.serialization.kotlinx.KotlinxSerializer
+import io.github.koogcompose.phase.Phase
+import io.github.koogcompose.phase.toTool
 import io.github.koogcompose.provider.KoogAIProvider
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.tool.toKoogTool
@@ -45,6 +45,10 @@ public class KoogRoutine(
      *
      * Uses the initial phase's instructions as the system prompt if phases
      * are registered, otherwise falls back to the global effective instructions.
+     *
+     * Tool registration mirrors [PhaseAwareAgent]: global tools + all phase tools
+     * + all transition tools are registered so the LLM can call them regardless
+     * of the current phase scope.
      */
     public fun toAgent(
         context: KoogComposeContext<*>,
@@ -63,8 +67,6 @@ public class KoogRoutine(
                 system(systemPrompt)
             },
             model = provider.resolveModelForConfig(),
-            // maxAgentIterations is separate from structureFixingRetries —
-            // don't conflate them. Use the dedicated config field.
             maxAgentIterations = context.config.maxAgentIterations,
             missingToolsConversionStrategy = MissingToolsConversionStrategy.Missing(
                 ToolCallDescriber.JSON
@@ -72,8 +74,17 @@ public class KoogRoutine(
             serializer = KotlinxSerializer()
         )
 
+        // Register ALL tools — global + all phases + all transitions.
+        // This matches PhaseAwareAgent's approach so the LLM has full tool
+        // visibility regardless of which phase it's currently in.
         val toolRegistry = KoogToolRegistry {
             context.toolRegistry.all.forEach { tool(it.toKoogTool()) }
+            context.phaseRegistry.all.forEach { phase ->
+                phase.toolRegistry.all.forEach { tool(it.toKoogTool()) }
+                phase.transitions.forEach { transition ->
+                    tool(transition.toTool().toKoogTool())
+                }
+            }
         }
 
         return AIAgent(

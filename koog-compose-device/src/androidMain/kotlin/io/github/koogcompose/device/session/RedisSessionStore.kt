@@ -6,7 +6,7 @@ import io.github.koogcompose.session.SessionStore
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlin.getValue
+import kotlin.time.Clock
 
 /**
  * Redis-backed [SessionStore] for koog-compose-device.
@@ -46,6 +46,9 @@ import kotlin.getValue
  *
  * NOTE: Network I/O is dispatched on [Dispatchers.IO]. Redis calls are
  * blocking (Jedis) — the dispatcher prevents them from blocking the main thread.
+ *
+ * Lifecycle: Call [close()] when your DI container is destroyed to release
+ * the connection pool. No-op if the pool was never initialised.
  */
 class RedisSessionStore(
     private val host: String,
@@ -59,17 +62,19 @@ class RedisSessionStore(
     private val json = Json { ignoreUnknownKeys = true }
 
     // Jedis pool — lazily initialised so the store can be created on the main thread
-    private val pool by lazy {
-        redis.clients.jedis.JedisPoolConfig().let { config ->
+    private var _pool: redis.clients.jedis.JedisPool? = null
+    private val pool: redis.clients.jedis.JedisPool
+        get() = _pool ?: redis.clients.jedis.JedisPoolConfig().let { config ->
             config.maxTotal = 8
             config.maxIdle = 4
-            if (password != null) {
+            val newPool = if (password != null) {
                 redis.clients.jedis.JedisPool(config, host, port, 2000, password, useSsl)
             } else {
                 redis.clients.jedis.JedisPool(config, host, port, 2000, null, 0, useSsl)
             }
+            _pool = newPool
+            newPool
         }
-    }
 
     private fun key(sessionId: String) = "$keyPrefix$sessionId"
 
@@ -83,8 +88,9 @@ class RedisSessionStore(
 
     override suspend fun save(sessionId: String, session: AgentSession) =
         withContext(Dispatchers.IO) {
+            val now = Clock.System.now().toEpochMilliseconds()
             val serialized = json.encodeToString(
-                session.copy(updatedAt = System.currentTimeMillis())
+                session.copy(updatedAt = now)
             )
             pool.resource.use { jedis ->
                 if (ttlSeconds != null) {
@@ -107,7 +113,12 @@ class RedisSessionStore(
         }
 
     /**
-     * Closes the Jedis connection pool. Call from your DI teardown.
+     * Closes the Jedis connection pool. Call from your DI teardown or
+     * when the app process is shutting down to release network resources.
+     * Safe to call multiple times — subsequent calls are no-ops.
      */
-    fun close() = pool.close()
+    fun close() {
+        _pool?.close()
+        _pool = null
+    }
 }

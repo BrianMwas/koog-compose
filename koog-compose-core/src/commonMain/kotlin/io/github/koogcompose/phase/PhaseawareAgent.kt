@@ -5,6 +5,9 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.agents.core.agent.config.AIAgentConfig
 import ai.koog.agents.core.agent.config.MissingToolsConversionStrategy
 import ai.koog.agents.core.agent.config.ToolCallDescriber
+import ai.koog.agents.snapshot.feature.Persistence
+import ai.koog.agents.snapshot.providers.PersistenceStorageProvider
+import ai.koog.agents.snapshot.providers.file.FilePersistenceStorageProvider
 import ai.koog.agents.core.tools.ToolRegistry as KoogToolRegistry
 
 import ai.koog.prompt.dsl.prompt
@@ -26,8 +29,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
  * Creates a single [AIAgent] whose strategy is the multi-phase subgraph pipeline
  * built by [PhaseStrategyBuilder].
  *
- * Three features are now properly installed on every agent using Koog's
- * install-feature pattern:
+ * Four features are installed on every agent using Koog's install-feature pattern:
  *
  * 1. **[ChatMemory]** — owns conversation history. Loads history before each turn
  *    and saves it after via [SessionStoreChatHistoryProvider], which delegates to
@@ -42,6 +44,11 @@ import kotlinx.coroutines.flow.MutableSharedFlow
  *    lifecycle callbacks (tool calls, agent completion, failures) to koog-compose's
  *    [KoogEvent] sealed hierarchy. Installed as a proper feature, not via direct
  *    handleEvents wiring. Previously [EventHandlers] was never called by any Koog hook.
+ *
+ * 4. **[Persistence]** — captures complete agent state (message history, current
+ *    node, input data, timestamps) at each execution point. Supports rollback to
+ *    previous checkpoints via [ai.koog.agents.core.agent.feature.persistence.RollbackToolRegistry].
+ *    Uses file-based storage by default for cross-session durability.
  *
  * Call `agent.run(userMessage, sessionId)` — the two-arg overload is required
  * for [ChatMemory] to scope history correctly per session.
@@ -58,6 +65,7 @@ public object PhaseAwareAgent {
         eventHandlers: EventHandlers = EventHandlers.Empty,
         currentTurnId: () -> String = { "0" },
         coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+        persistenceStorage: PersistenceStorageProvider = defaultPersistenceStorage(sessionId),
     ): AIAgent<String, String> {
 
         // Resolve [ToolName] refs in all phase instructions before building the strategy.
@@ -153,7 +161,28 @@ public object PhaseAwareAgent {
                         )
                     }
                 }
+
+                // ── 4. Persistence — full agent state checkpoints ─────────────────
+                // Captures message history, current node, input data, and timestamps.
+                // Supports rollback via context.persistence().rollbackToCheckpoint().
+                install(Persistence) {
+                    storage = persistenceStorage
+                    enableAutomaticPersistence = true
+                }
             }
         )
+    }
+
+    /**
+     * Default persistence storage — file-based for cross-session durability.
+     *
+     * Checkpoints are stored under `$cacheDir/koog-persistence/$sessionId/`.
+     * Override this by passing a custom [PersistenceStorageProvider] to [create].
+     */
+    public fun defaultPersistenceStorage(sessionId: String): PersistenceStorageProvider {
+        val cacheDir = System.getProperty("java.io.tmpdir")
+            ?: System.getProperty("user.home")
+            ?: "/tmp"
+        return FilePersistenceStorageProvider("$cacheDir/koog-persistence/$sessionId")
     }
 }

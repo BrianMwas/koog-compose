@@ -28,12 +28,10 @@ kotlin {
             implementation(project(":koog-compose-testing"))
         }
         val androidMain by getting {
-            kotlin.exclude("io/github/koogcompose/device/background/**")
-            kotlin.exclude("io/github/koogcompose/device/session/RedisSessionStore.kt")
-
             dependencies {
                 implementation(libs.play.services.location)
                 implementation(libs.androidx.core.ktx)
+                implementation(libs.androidx.work.runtime.ktx)
             }
         }
     }
