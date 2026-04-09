@@ -1,11 +1,15 @@
 package io.github.koogcompose.session
 
 import ai.koog.agents.core.agent.AIAgent
+import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.model.PromptExecutor
 import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
+import io.github.koogcompose.phase.StructuredPhaseExecutor
+import io.github.koogcompose.phase.phaseOutput
 import io.github.koogcompose.provider.buildExecutor
+import io.github.koogcompose.provider.resolveModel
 import io.github.koogcompose.tool.HandoffTool
 import io.github.koogcompose.tool.HandoffContext
 import io.github.koogcompose.tool.handoffToolName
@@ -215,6 +219,36 @@ public class SessionRunner<S>(
         if (toolName.startsWith("handoff_to_")) {
             pendingHandoffTarget = toolName.removePrefix("handoff_to_")
         }
+    }
+
+    /**
+     * One-shot structured extraction outside of any phase.
+     *
+     * ```kotlin
+     * val sentiment = runner.extract<SentimentResult>(
+     *     input = "I love this app but onboarding is confusing",
+     *     instructions = "Extract sentiment as JSON."
+     * )
+     * ```
+     */
+    private suspend inline fun <reified T> extract(
+        input: String,
+        instructions: String,
+        retries: Int = session.config.retryPolicy.structureFixingRetries,
+        examples: List<T> = emptyList(),
+    ): T {
+        val context  = session.contextFor(session.mainAgent)
+        val model    = resolveModel(context.providerConfig)
+        val executor = buildExecutor(context.providerConfig)
+        val output   = phaseOutput<T>(retries = retries, examples = examples)
+
+        val extractPrompt = prompt("koog-compose-extract") {
+            if (instructions.isNotBlank()) system(instructions)
+            user { +input }
+        }
+
+        return StructuredPhaseExecutor(executor, output, model)
+            .executeStructured(extractPrompt)
     }
 
     private suspend fun handleActivityEvent(event: KoogEvent) {
