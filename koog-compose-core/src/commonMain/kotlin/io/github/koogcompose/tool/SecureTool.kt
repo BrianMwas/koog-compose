@@ -1,5 +1,7 @@
 package io.github.koogcompose.tool
 
+import kotlinx.serialization.KSerializer
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
 /**
@@ -29,12 +31,19 @@ public enum class PermissionLevel {
  * The result of a tool execution.
  */
 public sealed class ToolResult {
-    /** Execution was successful with the provided [output]. */
     public data class Success(val output: String) : ToolResult()
-    /** Execution was denied, either by the user or the system. */
     public data class Denied(val reason: String = "User denied permission") : ToolResult()
-    /** Execution failed due to an [message]. */
     public data class Failure(val message: String) : ToolResult()
+
+    /** NEW — typed structured result. */
+    public data class Structured<T>(
+        val data: T,
+        val serializer: KSerializer<T>,
+    ) : ToolResult() {
+        /** Renders [data] as a JSON string for the LLM. */
+        public fun toJson(): String =
+            Json.encodeToString(serializer, data)
+    }
 }
 
 /**
