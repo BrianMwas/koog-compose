@@ -7,8 +7,8 @@
 
 `koog-compose` is a developer-first Kotlin Multiplatform (KMP) runtime for building AI-driven features that orchestrate app logic, device capabilities, and UI from a single declarative DSL.
 
-Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between AI agent graphs and real app surfaces — giving you typed shared state, phase-aware conversations, plug-and-play persistence, token-level streaming, and Material 3 UI components that work across Android, iOS, and Desktop.
- 
+Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between AI agent graphs and real app surfaces — giving you typed shared state, phase-aware conversations, multi-agent handoff, plug-and-play persistence, token-level streaming, and Material 3 UI components that work across Android, iOS, and Desktop.
+
 ---
 
 ## Why koog-compose?
@@ -23,7 +23,8 @@ Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges 
 | Blank UI bubble while LLM thinks | `responseStream: Flow<String>` emits tokens as they arrive |
 | Raw exceptions surface to UI on failure | Retry with backoff + stuck detection + graceful fallback messages |
 | LLM hallucinated args crash your tool silently | `validateArgs()` blocks bad calls before execution |
- 
+| Multi-agent routing is manual plumbing | `handoff(agentRef)` — one line to delegate to a specialist |
+
 ---
 
 ## Modules
@@ -35,17 +36,17 @@ io.github.brianmwas.koog_compose:koog-compose-device        ← Android/iOS devi
 io.github.brianmwas.koog_compose:koog-compose-testing       ← Deterministic fake executor + test DSL
 io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed persistent memory       (optional)
 ```
- 
+
 ---
 
 ## Installation
 
 ```kotlin
 dependencies {
-    implementation("io.github.brianmwas.koog_compose:koog-compose-core:0.1.4")
-    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:0.1.4")            // Compose UI components
-    implementation("io.github.brianmwas.koog_compose:koog-compose-device:0.1.4")        // Android/iOS device tools
-    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:0.1.4")  // Persistent memory via Room
+    implementation("io.github.brianmwas.koog_compose:koog-compose-core:0.3.2")
+    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:0.3.2")            // Compose UI components
+    implementation("io.github.brianmwas.koog_compose:koog-compose-device:0.3.2")        // Android/iOS device tools
+    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:0.3.2")  // Persistent memory via Room
 }
 ```
 
@@ -53,15 +54,15 @@ dependencies {
 > ```kotlin
 > maven("https://s01.oss.sonatype.org/content/repositories/snapshots/")
 > ```
-> Then use version `1.1.0-SNAPSHOT`.
- 
+> Then use version `0.3.2-SNAPSHOT`.
+
 ---
 
 ## Quick start
 
 ### 1. Define your app state
 
-koog-compose is generic over your app state type. Tools update it, your Compose UI observes it — no globals, no manual wiring.
+koog-compose is generic over your app state type. Tools update it, your Compose UI observeses it — no globals, no manual wiring.
 
 ```kotlin
 data class AppState(
@@ -80,9 +81,9 @@ val context = koogCompose<AppState> {
             model = "claude-3-5-sonnet"
         }
     }
- 
+
     initialState { AppState(userId = currentUserId) }
- 
+
     phases {
         phase("greeting") {
             instructions { "Greet the user and offer to check their location." }
@@ -94,7 +95,7 @@ val context = koogCompose<AppState> {
             instructions { "Confirm the detected location with the user." }
         }
     }
- 
+
     config {
         retry {
             maxAttempts = 3
@@ -105,7 +106,7 @@ val context = koogCompose<AppState> {
             fallbackMessage = "I'm having trouble with that. Let me connect you to support."
         }
     }
- 
+
     events {
         onAgentStuck { event ->
             // navigate to support, log analytics, etc.
@@ -128,23 +129,23 @@ Extend `StatefulTool<S>` to read and mutate app state as a side effect of execut
 class SendMoneyTool(
     override val stateStore: KoogStateStore<AppState>
 ) : StatefulTool<AppState>() {
- 
+
     override val name = "SendMoney"
     override val description = "Send money to a recipient"
     override val permissionLevel = PermissionLevel.CRITICAL
- 
+
     // Optional — validate LLM-supplied args before anything else runs
     override fun validateArgs(args: JsonObject): ValidationResult {
         val amount = args["amount"]?.toString()?.toDoubleOrNull()
             ?: return ValidationResult.Invalid("missing or non-numeric field: amount")
         if (amount <= 0) return ValidationResult.Invalid("amount must be greater than 0")
- 
+
         args["recipientId"]
             ?: return ValidationResult.Invalid("missing required field: recipientId")
- 
+
         return ValidationResult.Valid
     }
- 
+
     override suspend fun execute(args: JsonObject): ToolResult {
         // args are guaranteed valid here
         val amount = args["amount"]!!.toString().toDouble()
@@ -166,14 +167,14 @@ class ChatViewModel(
     context: KoogComposeContext<AppState>,
     executor: PromptExecutor
 ) : ViewModel() {
- 
+
     val session = PhaseSession(
         context   = context,
         executor  = executor,
         sessionId = "user_brian",
         scope     = viewModelScope
     )
- 
+
     val isRunning      = session.isRunning       // StateFlow<Boolean>
     val lastResponse   = session.lastResponse    // StateFlow<String?>
     val currentPhase   = session.currentPhase    // StateFlow<String>
@@ -181,6 +182,7 @@ class ChatViewModel(
     val turnId         = session.turnId          // StateFlow<Int> — increments per send()
     val appState       = session.appState        // StateFlow<AppState>?
     val error          = session.error           // StateFlow<Throwable?>
+    val toolCallCounts = session.toolCallCounts  // StateFlow<Map<String, Int>>
 }
 ```
 
@@ -199,7 +201,7 @@ fun StreamingMessage(viewModel: ChatViewModel) {
                 .runningFold("") { acc, token -> acc + token }
         }
     }.collectAsState(initial = "")
- 
+
     Text(text = displayText)
 }
 ```
@@ -217,16 +219,16 @@ val fullResponse by viewModel.lastResponse.collectAsState()
 fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
     val appState  by viewModel.appState.collectAsState()
     val isRunning by viewModel.isRunning.collectAsState()
- 
+
     val chatState = rememberChatState(viewModel.session)
     val snackbarHostState = remember { SnackbarHostState() }
- 
+
     // Handles SAFE / SENSITIVE / CRITICAL confirmation tiers automatically
     ConfirmationObserver(
         chatState = chatState,
         handler = rememberAutoConfirmationHandler(snackbarHostState)
     )
- 
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = { ChatInputBar(chatState) }
@@ -247,7 +249,7 @@ val session = PhaseSession(
     scope     = viewModelScope
 )
 ```
- 
+
 ---
 
 ## How it works
@@ -312,6 +314,33 @@ greeting ──► location_check ──► confirm_location ──► END
 
 Transitions are driven by the LLM reading the current `AppState` — you define the conditions, the agent decides when they're met.
 
+### Tool references in instructions
+
+Use `[ToolName]` syntax in phase instructions to inject full tool schemas into the system prompt. The LLM gets precise knowledge of what tools it has and how to call them, without you repeating tool docs in every instruction block.
+
+```kotlin
+phase("payment") {
+    instructions {
+        """
+        Help the user send money.
+        Use [GetBalance] to check funds before sending.
+        Use [SendMoney] to execute the transfer.
+        Always confirm before calling [SendMoney].
+        """.trimIndent()
+    }
+}
+```
+
+`[GetBalance]` is expanded to:
+```
+`get_balance` [SAFE]: Retrieves the current account balance for the authenticated user.
+  Parameters:
+    - account_id (String, required): The account to query.
+    - currency (String, optional): ISO currency code. Defaults to KES.
+```
+
+Matching is flexible — `[GetBalance]`, `[get_balance]`, and `[GetBalanceTool]` all resolve to the same tool. Unresolved references are left in-place with a `⚠ not registered` warning so you catch mismatches at dev time.
+
 ### Arg validation
 
 `SecureTool` exposes an optional `validateArgs(args: JsonObject): ValidationResult` hook.
@@ -330,6 +359,47 @@ LLM delivers args
 
 Existing tools that don't override `validateArgs()` are unaffected — the default returns
 `ValidationResult.Valid`.
+
+### Structured outputs
+
+Phases can declare a typed output schema. The LLM is primed with the JSON schema + examples, and the response is parsed into your Kotlin data class automatically.
+
+```kotlin
+@Serializable
+data class ExtractedIntent(
+    @LLMDescription("The user's primary intent")
+    val intent: String,
+
+    @LLMDescription("Confidence score between 0.0 and 1.0")
+    val confidence: Double,
+)
+
+phase("intent_extraction") {
+    instructions { "Analyze the user's message and extract intent." }
+    typedOutput<ExtractedIntent>(
+        retries = 3,
+        version = 1,
+        examples = listOf(
+            ExtractedIntent(intent = "check_balance", confidence = 0.92)
+        ),
+        validate = { result ->
+            if (result.confidence < 0.5) {
+                ValidationResult.Invalid("confidence too low: ${result.confidence}")
+            } else {
+                ValidationResult.Valid
+            }
+        }
+    )
+}
+```
+
+Features:
+- **Auto schema generation** — JSON Schema generated from `@LLMDescription` annotations
+- **Retry with self-correction** — validation errors fed back to LLM so it can fix its output
+- **Schema versioning** — `version` parameter for evolving output types and analytics tracking
+- **Markdown fence stripping** — handles ```json fences gracefully
+
+One-shot extraction outside phases is also available via `runner.extract<T>()`.
 
 ### Streaming
 
@@ -356,6 +426,8 @@ config {
     retry {
         maxAttempts = 3
         initialDelayMs = 500L  // doubles on each attempt
+        useStructureFixingParser = true
+        structureFixingRetries = 3
     }
     stuckDetection {
         threshold = 3
@@ -387,6 +459,72 @@ config {
 }
 ```
 
+### Multi-agent handoff
+
+Define specialist agents and register handoff tools in your main agent's phase. The LLM reads the handoff descriptions and calls them when appropriate — `SessionRunner` intercepts the call and swaps the active agent.
+
+```kotlin
+val focusAgent = koogAgent("focus") {
+    instructions { "You are a focus session specialist. Suggest pomodoro techniques and encourage deep work." }
+    phases {
+        phase("active") {
+            instructions { "Help the user set up a focus session." }
+        }
+    }
+}
+
+val weatherAgent = koogAgent("weather") {
+    instructions { "You are a weather specialist. Provide friendly, brief forecasts." }
+    phases {
+        phase("active") {
+            instructions { "Give the user a brief weather update." }
+        }
+    }
+}
+
+val session = koogSession<Unit> {
+    provider { ollama(model = "llama3.2") }
+
+    main {
+        instructions {
+            """
+            You are a general assistant. Route to specialists when:
+            - Focus or productivity → handoff to focus agent
+            - Weather or forecasts → handoff to weather agent
+            """.trimIndent()
+        }
+        phases {
+            phase("root", initial = true) {
+                handoff(focusAgent) {
+                    "User asks about focus, productivity, pomodoro, or concentration"
+                }
+                handoff(weatherAgent) {
+                    "User asks about weather or wants a forecast"
+                }
+            }
+        }
+    }
+
+    agents(focusAgent, weatherAgent)
+}
+```
+
+Handoff options:
+- **`description`** — natural language condition the LLM reads to decide when to call
+- **`continueHistory`** — if `true` (default), the specialist sees the full conversation; if `false`, it starts fresh
+- **`onHandoff`** — callback to mutate shared state before the swap
+
+### Tool call tracking
+
+Every tool call is tracked per session. Expose `toolCallCounts: StateFlow<Map<String, Int>>` from your session handle for analytics, usage quotas, and loop detection.
+
+```kotlin
+val counts by handle.toolCallCounts.collectAsState()
+println("get_balance called: ${counts["get_balance"] ?: 0} times")
+```
+
+Counts persist in `AgentSession` and reset on `session.reset()`.
+
 ### Session store
 
 Implement `SessionStore` to plug in any persistence backend:
@@ -398,6 +536,17 @@ interface SessionStore {
     suspend fun delete(sessionId: String)
     suspend fun exists(sessionId: String): Boolean
 }
+
+data class AgentSession(
+    val sessionId: String,
+    val currentPhaseName: String,
+    val messageHistory: List<SessionMessage>,
+    val serializedState: String? = null,
+    val contextVars: Map<String, String> = emptyMap(),
+    val toolCallCounts: Map<String, Int> = emptyMap(),  // ← tracked per session
+    val createdAt: Long,
+    val updatedAt: Long
+)
 ```
 
 The `:session-room` module provides a ready-made Room implementation.
@@ -434,9 +583,9 @@ val session = testPhaseSession(context) {
         respondWith("Sure, fetching location now.")
     }
 }
- 
+
 session.send("I need help with my location")
- 
+
 assertPhase(session, "location_check")
 assertToolCalled(session, "RecordLocationIntent")
 assertState(session) { state ->
@@ -478,7 +627,7 @@ val context = koogCompose {
 }
 // context is KoogComposeContext<Unit>
 ```
- 
+
 ---
 
 ## Platform support
@@ -490,11 +639,14 @@ val context = koogCompose {
 | Token streaming | ✅ | ✅ | ✅ |
 | Retry & stuck detection | ✅ | ✅ | ✅ |
 | Arg validation | ✅ | ✅ | ✅ |
+| Structured outputs | ✅ | ✅ | ✅ |
+| Multi-agent handoff | ✅ | ✅ | ✅ |
+| Tool call tracking | ✅ | ✅ | ✅ |
 | Compose UI | ✅ | ✅ | ✅ |
 | Room session store | ✅ | ✅ | — |
-| Device tools (location) | ✅ | 🔜 v1.1 | — |
+| Device tools (location) | ✅ | 🔜 v0.4 | — |
 | WorkManager proactive agents | ✅ | — | — |
- 
+
 ---
 
 ## Build & test
@@ -513,21 +665,29 @@ val context = koogCompose {
 # Generate KDoc
 ./gradlew dokkaHtml
 ```
- 
+
 ---
 
 ## Roadmap
 
-### v1.1
+### v0.3 (current)
+- ✅ Structured outputs with validation & self-correction
+- ✅ Schema versioning for evolving output types
+- ✅ Tool call frequency tracking per session
+- ✅ Multi-agent handoff via `handoff(agentRef)`
+- ✅ `[ToolName]` reference resolution in phase instructions
+
+### v0.4
 - **iOS device parity** — `CLLocation` and `PHPicker` tool support
 - **ActivityResult integration** — camera, file picker, permissions as agent tools
-- **WorkManager proactive agents** — background context gathering
+- **WorkManager proactive agents** — background context gathering on Android
 - **Structured observability** — pluggable `EventSink` for Firebase, Datadog, custom backends
 
-### v1.2
+### v0.5
 - **Backend telemetry sinks** — Firebase, remote tracing exporters
 - **Screenshot context tool** — give the agent a view of the current screen
 - **Voice slot** — LiveKit-compatible audio input/output in the UI module
+- **Schema migration utilities** — migrate persisted structured outputs across versions
 
 ---
 
@@ -544,11 +704,10 @@ Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) before
 
 ```
 Copyright 2025-2026 Brian Mwangi
- 
+
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
- 
+
     https://www.apache.org/licenses/LICENSE-2.0
 ```
- 
