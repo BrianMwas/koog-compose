@@ -8,14 +8,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.github.koogcompose.event.KoogEvent
-import io.github.koogcompose.session.koogCompose
+import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.ui.components.ChatInputBar
 import io.github.koogcompose.ui.components.ChatMessageList
 import io.github.koogcompose.ui.confirmation.ConfirmationObserver
@@ -36,7 +38,7 @@ import io.github.koogcompose.ui.state.rememberChatState
 fun KoogSampleApp(
     modifier: Modifier = Modifier,
 ) {
-    val context = koogCompose {
+    val context = KoogComposeContext<Unit> {
         provider {
             ollama(model = "llama3.2")
         }
@@ -163,4 +165,10 @@ fun KoogSampleApp(
             )
         }
     }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PreviewKoogSampleApp() {
+    KoogSampleApp()
 }

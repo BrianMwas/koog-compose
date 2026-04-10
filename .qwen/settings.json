@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "WebFetch(docs.koog.ai)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(./gradlew *)"
     ]
   },
   "$version": 3

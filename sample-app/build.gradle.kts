@@ -19,7 +19,6 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":koog-compose-core"))
-            implementation(project(":koog-compose-ui"))
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(libs.material3.v190)
@@ -29,10 +28,9 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
         }
         androidMain.dependencies {
+            implementation(project(":koog-compose-ui"))
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.core.ktx)
-        }
-        iosMain.dependencies {
         }
     }
 }

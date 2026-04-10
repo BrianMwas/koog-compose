@@ -24,6 +24,18 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+// ── Sentinel for proactive triggers ─────────────────────────────────────────
+
+/**
+ * Sentinel value used internally to signal a proactive (non-user) turn.
+ * Not surfaced to the LLM or persisted in history.
+ */
+private const val PROACTIVE_SENTINEL = "__proactive__"
+
+/** Thrown when [resumeAt] targets a phase that no agent in the session owns. */
+public class UnknownPhaseException(phaseName: String) :
+    IllegalArgumentException("Phase '$phaseName' not found in any registered agent.")
+
 /**
  * Multi-agent runtime for a [KoogSession].
  *
@@ -38,12 +50,17 @@ public class SessionRunner<S>(
     internal val session: KoogSession<S>,
     override val sessionId: String,
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+    /**
+     * Optional executor for testing. When null, built from the session's
+     * provider config — the normal production path.
+     */
+    private val testExecutor: PromptExecutor? = null,
 ) : KoogSessionHandle {
 
     // Build executor once from the session's main agent context.
     // ✅ Correct — build the executor the same way KoogAIProvider does internally
     private val executor: PromptExecutor =
-        buildExecutor(session.contextFor(session.mainAgent).providerConfig)
+        testExecutor ?: buildExecutor(session.contextFor(session.mainAgent).providerConfig)
 
     // ── Activity state ─────────────────────────────────────────────────────
 
@@ -163,10 +180,58 @@ public class SessionRunner<S>(
         }
     }
 
+    // ── Proactive resume ───────────────────────────────────────────────────
+
+    /**
+     * Resume the agent at a named [phaseName] from any external trigger —
+     * push notification, deep link, background task.
+     *
+     * Lives entirely in commonMain; all platform triggers converge to this
+     * one call. The session must already have a registered agent (main or
+     * specialist) that owns the given phase.
+     *
+     * @param phaseName The phase to resume at.
+     * @param sessionId Override the conversation ID (defaults to [this.sessionId]).
+     * @param userMessage Optional user message to feed into the turn. When
+     *   null, a sentinel is used so nothing is written to history.
+     */
+    override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?) {
+        val effectiveSessionId = sessionId.ifBlank { this.sessionId }
+        scope.launch {
+            try {
+                val definition = resolveAgentForPhase(phaseName)
+                    ?: throw UnknownPhaseException(phaseName)
+
+                _activity.value = AgentActivity.Thinking
+                _activityDetail.value = ""
+                _error.value = null
+                _turnId.value += 1
+
+                activeHistorySessionId = effectiveSessionId
+                swapAgent(definition = definition, historySessionId = effectiveSessionId)
+
+                // Force the phase registry to the target phase before running.
+                val phase = definition.phaseRegistry.resolve(phaseName)
+                if (phase != null) {
+                    _currentPhase.value = phaseName
+                }
+
+                val input = userMessage ?: PROACTIVE_SENTINEL
+                runTurn(input)
+            } catch (e: Throwable) {
+                _error.value = e
+                _activity.value = AgentActivity.Failed(e)
+            }
+        }
+    }
+
     // ── Turn execution ─────────────────────────────────────────────────────
 
     private suspend fun runTurn(userMessage: String) {
-        var input = userMessage
+        // Strip the proactive sentinel so nothing is written to history
+        // when resuming from an external trigger without a user message.
+        var input = if (userMessage == PROACTIVE_SENTINEL) "" else userMessage
+        val effectiveInput = input  // preserved across handoffs
         var hopsRemaining = session.config.maxAgentIterations
 
         while (hopsRemaining-- > 0) {
@@ -207,7 +272,7 @@ public class SessionRunner<S>(
             _activityDetail.value = ""
             reasoningBuffer.clear()
 
-            input = userMessage
+            input = effectiveInput
         }
 
         error(
@@ -374,4 +439,11 @@ public class SessionRunner<S>(
             .filterIsInstance<HandoffTool>()
             .firstOrNull { it.name == toolName }
     }
+
+    /**
+     * Finds the first agent (main or registered specialist) that owns [phaseName].
+     */
+    private fun resolveAgentForPhase(phaseName: String): KoogAgentDefinition? =
+        (listOf(session.mainAgent) + session.agentRegistry.values)
+            .firstOrNull { it.phaseRegistry.resolve(phaseName) != null }
 }
