@@ -22,14 +22,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.github.koogcompose.event.KoogEvent
+import io.github.koogcompose.ui.events.EventObserver
 import io.github.koogcompose.session.KoogSession
 import io.github.koogcompose.session.SessionRunnerHandle
 import io.github.koogcompose.session.koogAgent
 import io.github.koogcompose.session.koogSession
 import io.github.koogcompose.session.multiAgentHandle
 import io.github.koogcompose.phase.handoff
+import io.github.koogcompose.ui.components.ChatInputBar
+import io.github.koogcompose.ui.components.ChatMessageList
+import io.github.koogcompose.ui.state.rememberChatState
 
 @Composable
 fun MultiAgentSample(
@@ -224,4 +229,10 @@ private fun AgentChip(
             style = MaterialTheme.typography.labelMedium,
         )
     }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PreviewMultiAgentSample() {
+    MultiAgentSample()
 }
