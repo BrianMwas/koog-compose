@@ -7,7 +7,7 @@
 
 A declarative Kotlin Multiplatform (KMP) runtime for building AI agents that orchestrate app logic, device capabilities, and UI — all from a single DSL.
 
-Built on [JetBrains Koog](https://github.com/JetBrains/koog), it gives you typed shared state, phase-aware conversations with subphases and parallel branches, multi-agent handoff, plug-and-play persistence, token-level streaming, and Material 3 UI components that work across Android, iOS, and Desktop.
+Built on [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between Koog's custom strategy graphs and real app surfaces — giving you typed shared state, phase-aware conversations with subphases and parallel branches, multi-agent handoff, plug-and-play persistence, token-level streaming, and Material 3 UI components across Android, iOS, and Desktop.
 
 ---
 
@@ -25,8 +25,9 @@ Built on [JetBrains Koog](https://github.com/JetBrains/koog), it gives you typed
 | LLM hallucinated args crash your tool silently | `validateArgs()` blocks bad calls before execution |
 | Multi-agent routing is manual plumbing | `handoff(agentRef)` — one line to delegate to a specialist |
 | Flat phases pollute the graph with internal steps | `subphase { }` encapsulates sequential steps; the graph sees one phase |
-| Independent reads run sequentially | `parallel { branch { } }` fans out concurrent tool calls |
+| Independent reads run sequentially | `parallel { branch { } }` fans out concurrent tool calls via Koog's `nodeExecuteMultipleTools(parallelTools = true)` |
 | External triggers (push, deep links) need custom routing | `session.resumeAt("phaseName")` — one call from any platform trigger |
+| Duplicate phase configs across agents | `include(phaseTemplate)` and `include(subphaseTemplate)` — define once, reuse anywhere |
 
 ---
 
@@ -209,7 +210,7 @@ val session = PhaseSession(
 
 ### Typed shared state
 
-`KoogStateStore<S>` is the single source of truth. Tools update it via `stateStore.update { }`, and your Compose UI observeses it via `session.appState` — a `StateFlow<S>`.
+`KoogStateStore<S>` is the single source of truth. Tools update it via `stateStore.update { }`, and your Compose UI observes it via `session.appState` — a `StateFlow<S>`.
 
 ```
 Tool executes
@@ -255,9 +256,9 @@ phase("post_purchase") {
 
 The phase graph only sees **checkout** → **post_purchase**. The three internal steps are invisible to the router.
 
-### Parallel branches — fan out independent reads
+### Parallel branches — concurrent tool execution
 
-When a phase needs multiple independent operations (location, device locale, permissions), use `parallel { branch { } }` to give the LLM access to all tools simultaneously. Many providers execute independent tool calls concurrently.
+When a phase needs multiple independent operations, use `parallel { branch { } }`. Tools from all branches are collected into a single subgraph that uses Koog's `nodeExecuteMultipleTools(parallelTools = true)` for true concurrent execution. Many LLM providers execute independent tool calls natively in parallel.
 
 ```kotlin
 phase("gather_context", initial = true) {
@@ -280,9 +281,57 @@ phase("gather_context", initial = true) {
 }
 ```
 
-Branch results flow through `stateStore` — design branch tools to write their output to `stateStore.update { }` directly. The join happens automatically once all branch tools have been called.
+Branch results flow through `stateStore` — design branch tools to write their output to `stateStore.update { }` directly. Multiple `parallel` blocks in one phase run sequentially (group 1 → group 2 → ...).
 
-Multiple `parallel` blocks in one phase run sequentially (group 1 → group 2 → ...).
+### Reusable templates — define once, include anywhere
+
+Common patterns like "research → summarise" appear in multiple agents. Define them once with `phaseTemplate` or `subphaseTemplate` and `include()` them anywhere.
+
+```kotlin
+// SharedTemplates.kt
+val researchSubphase = subphaseTemplate("research") {
+    instructions { "Search and summarise relevant information. Respond ONLY with JSON." }
+    tool(WebSearchTool())
+    typedOutput<ResearchSummary>()
+}
+
+val safetyCheckTemplate = phaseTemplate {
+    instructions { "Check content against safety guidelines." }
+    tool(ContentModerationTool())
+    typedOutput<SafetyResult>()
+}
+
+// Agent 1 — uses research as a subphase
+koogAgent("answer") {
+    phases {
+        phase("respond", initial = true) {
+            include(researchSubphase)           // adds "research" subphase
+            subphase("compose_answer") {
+                instructions { "Write the answer based on research." }
+            }
+        }
+    }
+}
+
+// Agent 2 — same templates, different flow
+koogAgent("email_drafter") {
+    phases {
+        phase("safety_check", initial = true) {
+            include(safetyCheckTemplate)        // flat phase template
+            onCondition("safe", "draft")
+        }
+        phase("draft") {
+            include(researchSubphase)           // same template, different agent
+            subphase("write_email") {
+                tool(EmailDraftTool())
+                typedOutput<EmailDraft>()
+            }
+        }
+    }
+}
+```
+
+Templates are plain Kotlin values — no new DSL machinery. Anything declared after `include()` overrides template values.
 
 ### Resume at a phase from any external trigger
 
@@ -292,16 +341,14 @@ Multiple `parallel` blocks in one phase run sequentially (group 1 → group 2 �
 // From a push notification handler:
 session.resumeAt("notify_user", userMessage = "Your order has shipped!")
 
-// From a deep link — resume without a user message:
+// From a deep link — resume without a user message (sentinel, no history pollution):
 session.resumeAt("onboarding_flow")
 
 // From a broadcast receiver:
 session.resumeAt("location_update", userMessage = "You're near a saved place")
 ```
 
-When called without a `userMessage`, a sentinel is used internally so nothing pollutes conversation history. If the phase doesn't exist in any registered agent, the error is surfaced on `session.error` as `UnknownPhaseException`.
-
-Works on both single-agent (`PhaseSession`) and multi-agent (`SessionRunner`) runtimes.
+When called without a `userMessage`, an internal sentinel is used so nothing pollutes conversation history. If the phase doesn't exist in any registered agent, the error is surfaced on `session.error` as `UnknownPhaseException`. Works on both single-agent (`PhaseSession`) and multi-agent (`SessionRunner`) runtimes.
 
 ### Tool references in instructions
 
@@ -588,7 +635,7 @@ assertGuardrailDenied(session, "RecordLocationIntent")
 
 ## Architecture
 
-koog-compose is a thin, opinionated layer over [JetBrains Koog](https://github.com/JetBrains/koog). Every `koogCompose { }` block produces a live `AIAgent` with four features installed:
+koog-compose is a thin, opinionated layer over [JetBrains Koog](https://github.com/JetBrains/koog). Every `koogCompose { }` block produces a live `AIAgent` with features installed:
 
 | Feature | Purpose |
 |---|---|
@@ -621,12 +668,37 @@ koogCompose { } DSL
 │  PhaseStrategyBuilder   │  ← phases / subphases / parallel → subgraphs
 │  • buildFlatSubgraph    │     with optional compression nodes
 │  • buildMultiStep       │
-│  • buildParallel        │
+│  • buildParallel        │     uses Koog's nodeExecuteMultipleTools(parallelTools = true)
 └────────┬────────────────┘
          │
          ▼
    Koog AIAgent runs ──► LLM calls, tool execution, phase transitions
 ```
+
+### Parallel tool execution
+
+When a phase has parallel branches, the strategy uses Koog's `nodeExecuteMultipleTools(parallelTools = true)` for true concurrent tool execution:
+
+```
+parallel branches subgraph:
+  nodeStart → nodeLLMRequestMultiple
+    → onAssistantMessage → nodeFinish (text response)
+    → onMultipleToolCalls → nodeExecuteMultipleTools(parallelTools = true)
+      → ALL tool calls execute concurrently
+      → nodeLLMSendMultipleToolResults → back to LLM
+```
+
+Regular phases and subphases use sequential single-tool execution — correct for step-by-step LLM orchestration.
+
+### Nesting guardrails
+
+The DSL prevents accidental nesting abuse:
+- `subphase { }` can only be declared on a top-level phase — not inside another subphase
+- `parallel { }` can only be declared on a top-level phase — not inside a subphase or branch
+- Branches inside `parallel { }` cannot declare further nesting
+- `onCondition { }` is only available on top-level phases (subphases don't have transitions — the parent handles them)
+
+Each violation produces a clear error message at DSL build time, not at runtime.
 
 ---
 
@@ -655,8 +727,9 @@ val context = koogCompose {
 | Arg validation | ✅ | ✅ | ✅ |
 | Structured outputs | ✅ | ✅ | ✅ |
 | Subphases (sequential) | ✅ | ✅ | ✅ |
-| Parallel branches | ✅ | ✅ | ✅ |
+| Parallel branches (concurrent) | ✅ | ✅ | ✅ |
 | Resume at phase | ✅ | ✅ | ✅ |
+| Reusable templates | ✅ | ✅ | ✅ |
 | Multi-agent handoff | ✅ | ✅ | ✅ |
 | Tool call tracking | ✅ | ✅ | ✅ |
 | Audit log redaction | ✅ | ✅ | ✅ |
@@ -677,8 +750,10 @@ val context = koogCompose {
 - ✅ Multi-agent handoff via `handoff(agentRef)`
 - ✅ `[ToolName]` reference resolution in phase instructions
 - ✅ Subphases — sequential steps inside a single phase
-- ✅ Parallel branches — fan out independent tool calls
+- ✅ Parallel branches — concurrent tool execution via `nodeExecuteMultipleTools(parallelTools = true)`
 - ✅ `resumeAt()` — jump to any phase from external triggers
+- ✅ Reusable templates — `phaseTemplate` and `subphaseTemplate` with `include()`
+- ✅ Nesting guardrails — clear errors for accidental deep nesting
 - ✅ Rich JSON Schema tool parameter types (String, Integer, Boolean, Enum, Array, Object)
 - ✅ Privacy & data ownership — all data stays on device by default
 - ✅ Audit log args redaction for PII-sensitive apps
