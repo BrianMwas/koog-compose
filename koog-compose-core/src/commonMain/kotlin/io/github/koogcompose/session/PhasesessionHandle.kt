@@ -43,6 +43,19 @@ public class PhaseSessionHandle<S>(
 
     override fun reset(): Unit = delegate.reset()
 
+    /**
+     * Resume at a named [phaseName] from any external trigger — push notification,
+     * deep link, background task.
+     *
+     * @param phaseName The phase to resume at.
+     * @param sessionId Override the conversation ID (defaults to [this.sessionId]).
+     * @param userMessage Optional user message. When null, a sentinel is used so
+     *   nothing is written to history.
+     * @throws IllegalArgumentException if the phase is not found.
+     */
+    override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?): Unit =
+        delegate.resumeAt(phaseName, sessionId, userMessage)
+
     override val toolCallCounts: StateFlow<Map<String, Int>>
         get() = delegate.toolCallCounts
 
@@ -120,6 +133,20 @@ public class SessionRunnerHandle<S>(
 
     override fun reset(): Unit = delegate.reset()
 
+    /**
+     * Resume the agent at a named [phaseName] from any external trigger —
+     * push notification, deep link, background task.
+     *
+     * @param phaseName The phase to resume at.
+     * @param sessionId Override the conversation ID (defaults to [this.sessionId]).
+     * @param userMessage Optional user message to feed into the turn. When
+     *   null, a sentinel is used so nothing is written to history.
+     * @throws io.github.koogcompose.session.UnknownPhaseException if no registered
+     *   agent owns the given phase.
+     */
+    override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?): Unit =
+        delegate.resumeAt(phaseName, sessionId, userMessage)
+
     override val toolCallCounts: StateFlow<Map<String, Int>>
         get() = delegate.toolCallCounts
 
@@ -144,15 +171,20 @@ public class SessionRunnerHandle<S>(
  *
  * The executor is built inside [SessionRunner] from the session's provider
  * config — call sites never need to import [PromptExecutor] directly.
+ *
+ * @param testExecutor Optional executor for testing. When null, built from
+ *   the session's provider config.
  */
 public fun <S> multiAgentHandle(
     session: KoogSession<S>,
     sessionId: String,
     scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+    testExecutor: PromptExecutor? = null,
 ): SessionRunnerHandle<S> = SessionRunnerHandle(
     SessionRunner(
-        session   = session,
-        sessionId = sessionId,
-        scope     = scope,
+        session      = session,
+        sessionId    = sessionId,
+        scope        = scope,
+        testExecutor = testExecutor,
     )
 )

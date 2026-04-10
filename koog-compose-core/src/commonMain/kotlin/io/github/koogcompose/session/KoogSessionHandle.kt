@@ -84,6 +84,24 @@ public interface KoogSessionHandle {
     public fun reset()
 
     /**
+     * Resume the agent at a named [phaseName] from any external trigger —
+     * push notification, deep link, background task.
+     *
+     * Only supported by multi-agent ([SessionRunnerHandle]) and
+     * single-agent phase-aware ([PhaseSessionHandle]) runtimes. The default
+     * implementation throws [UnsupportedOperationException].
+     *
+     * @param phaseName The phase to resume at.
+     * @param sessionId Override the conversation ID.
+     * @param userMessage Optional user message. When null, no message is
+     *   injected into the conversation history.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    public fun resumeAt(phaseName: String, sessionId: String, userMessage: String?) {
+        throw UnsupportedOperationException("resumeAt is not supported by this session handle.")
+    }
+
+    /**
      * Tool call frequency for the current session.
      *
      * Maps each tool name to the number of times it has been called

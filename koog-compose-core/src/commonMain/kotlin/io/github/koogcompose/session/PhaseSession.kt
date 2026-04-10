@@ -17,6 +17,11 @@ import kotlinx.coroutines.launch
 import kotlin.time.Clock
 
 /**
+ * Sentinel for proactive (non-user) turns. Not written to history.
+ */
+private const val PROACTIVE_SENTINEL = "__proactive__"
+
+/**
  * Compose/ViewModel-friendly runtime for a single phase-aware agent.
  *
  * ## Activity state model
@@ -226,6 +231,46 @@ public class PhaseSession<S>(
             "koog-compose: Phase '$phaseName' not found in registry."
         }
         _currentPhase.value = phaseName
+    }
+
+    /**
+     * Resume at a named [phaseName] from any external trigger — push notification,
+     * deep link, background task.
+     *
+     * @param phaseName The phase to resume at.
+     * @param sessionId Override the conversation ID (defaults to [this.sessionId]).
+     * @param userMessage Optional user message. When null, a sentinel is used so
+     *   nothing is written to history.
+     */
+    override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?) {
+        val effectiveSessionId = sessionId.ifBlank { this.sessionId }
+        val effectiveUserMessage = userMessage
+        requireNotNull(context.phaseRegistry.resolve(phaseName)) {
+            "koog-compose: Phase '$phaseName' not found in registry."
+        }
+        scope.launch {
+            _activity.value = AgentActivity.Thinking
+            _activityDetail.value = ""
+            _error.value = null
+            _turnId.value += 1
+            _currentPhase.value = phaseName
+
+            try {
+                ensureAgentCreated(EventHandlers {
+                    onEvent { event -> handleActivityEvent(event) }
+                    onEvent { event -> eventHandlers.dispatch(event) }
+                })
+                val input = effectiveUserMessage ?: PROACTIVE_SENTINEL
+                val result = requireNotNull(agent) { "Agent failed to initialise." }
+                    .run(input, effectiveSessionId)
+                _lastResponse.value = result
+                _activity.value = AgentActivity.Completed(result)
+                _activityDetail.value = result
+            } catch (e: Throwable) {
+                _error.value = e
+                _activity.value = AgentActivity.Failed(e)
+            }
+        }
     }
 
     // ── Activity event bridge ──────────────────────────────────────────────
