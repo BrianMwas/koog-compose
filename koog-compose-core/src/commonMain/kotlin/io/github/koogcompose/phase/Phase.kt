@@ -41,9 +41,32 @@ public data class Phase(
     val transitions: List<PhaseTransition> = emptyList(),
     val isInitial: Boolean = false,
 
-
     val outputStructure: PhaseOutput<*>? = null,
-)
+
+    /**
+     * When non-empty, this phase is a container of sequential sub-steps.
+     * [PhaseStrategyBuilder] chains them as nested subgraphs in order.
+     * The parent phase's [transitions] only fire after ALL subphases complete.
+     *
+     * Subphase names are namespaced as `parentName__subphaseName`
+     * (double underscore) to avoid collisions in the flat phaseSubgraphs map.
+     */
+    val subphases: List<Phase> = emptyList(),
+
+    /**
+     * Each inner list is a group of branches that run in parallel.
+     * Multiple [parallel] blocks in one phase → multiple groups, run sequentially.
+     * Within a group, all branches fan out simultaneously and join when all finish.
+     *
+     * Branch names are namespaced as `parentName__parallel__branchName`.
+     */
+    val parallelGroups: List<List<Phase>> = emptyList(),
+) {
+    /** True when this phase delegates execution to sequential subphases. */
+    val hasSubphases: Boolean get() = subphases.isNotEmpty()
+    /** True when this phase has parallel branches. */
+    val hasParallel: Boolean get() = parallelGroups.isNotEmpty()
+}
 
 /**
  * Defines a transition from the current phase to another.
@@ -101,7 +124,25 @@ public class PhaseRegistry private constructor(
                 resolvedInstructions = ToolRefResolver.resolve(
                     phase.instructions,
                     globalRegistry
-                )
+                ),
+                subphases = phase.subphases.map { sub ->
+                    sub.copy(
+                        resolvedInstructions = ToolRefResolver.resolve(
+                            sub.instructions,
+                            globalRegistry
+                        )
+                    )
+                },
+                parallelGroups = phase.parallelGroups.map { group ->
+                    group.map { branch ->
+                        branch.copy(
+                            resolvedInstructions = ToolRefResolver.resolve(
+                                branch.instructions,
+                                globalRegistry
+                            )
+                        )
+                    }
+                }
             )
         }
         return PhaseRegistry(resolved)
@@ -153,7 +194,9 @@ public class PhaseBuilder(
     private var instructions: String = ""
     private val toolRegistryBuilder = ToolRegistry.Builder()
     private val transitions = mutableListOf<PhaseTransition>()
-    public var outputStructure: PhaseOutput<*>? = null   // NEW
+    public var outputStructure: PhaseOutput<*>? = null
+    private val subphaseBuilders = mutableListOf<PhaseBuilder>()
+    private val parallelGroups = mutableListOf<List<PhaseBuilder>>()
 
     public fun instructions(block: () -> String) { instructions = block() }
     public fun tools(block: ToolRegistry.Builder.() -> Unit) { toolRegistryBuilder.apply(block) }
@@ -194,6 +237,94 @@ public class PhaseBuilder(
         )
     }
 
+    /**
+     * Declares a sequential sub-step inside this phase.
+     *
+     * Subphases run in declaration order. Each has its own tool scope —
+     * a tool registered in subphase 2 cannot be called in subphase 1.
+     * The parent phase's [onCondition] transitions only fire after ALL
+     * subphases complete.
+     *
+     * ```kotlin
+     * phase("checkout") {
+     *     subphase("validate_cart") {
+     *         tool(CheckInventoryTool())
+     *         typedOutput<CartValidation>()
+     *     }
+     *     subphase("process_payment") {
+     *         tool(ChargeCardTool()) // only reachable here
+     *         typedOutput<PaymentResult>()
+     *     }
+     *     subphase("confirm_order") {
+     *         tool(SendEmailTool())
+     *     }
+     *     onCondition("order complete", "post_purchase")
+     * }
+     * ```
+     */
+    public fun subphase(
+        name: String,
+        block: PhaseBuilder.() -> Unit
+    ) {
+        // Namespace as parentName__subphaseName to avoid collisions
+        val qualifiedName = "${this.name}__$name"
+        subphaseBuilders.add(PhaseBuilder(qualifiedName).apply(block))
+    }
+
+    /**
+     * Declares subgraphs that run simultaneously within this phase.
+     *
+     * All branches in the [parallel] block fan out at the same time.
+     * The phase only continues once every branch has finished.
+     * Each branch has its own isolated tool scope.
+     *
+     * Multiple [parallel] blocks in one phase → multiple groups, run sequentially.
+     *
+     * ```kotlin
+     * phase("gather_context", initial = true) {
+     *     parallel {
+     *         branch("location") {
+     *             tool(GeocoderTool())
+     *             typedOutput<LocationContext>()
+     *         }
+     *         branch("device") {
+     *             tool(LocaleTool())
+     *             typedOutput<DeviceContext>()
+     *         }
+     *         branch("permissions") {
+     *             tool(PermissionCheckTool())
+     *             typedOutput<PermissionContext>()
+     *         }
+     *     }
+     *     onCondition("context ready", "main")
+     * }
+     * ```
+     */
+    public fun parallel(block: ParallelBuilder.() -> Unit) {
+        val builder = ParallelBuilder(this.name).apply(block)
+        parallelGroups.add(builder.branches())
+    }
+
+    /**
+     * Applies a [PhaseTemplate] to this phase.
+     *
+     * Tools, instructions, and typed output from the template are merged in.
+     * Anything declared after `include()` overrides template values (later
+     * calls overwrite earlier ones).
+     */
+    public fun include(template: PhaseTemplate) {
+        template.apply(this)
+    }
+
+    /**
+     * Adds a [SubphaseTemplate] as a named subphase of this phase.
+     *
+     * Equivalent to calling `subphase(template.name) { template.apply(this) }`.
+     */
+    public fun include(template: SubphaseTemplate) {
+        subphase(template.name) { template.apply(this) }
+    }
+
     public fun build(): Phase = Phase(
         name                 = name,
         instructions         = instructions,
@@ -202,5 +333,105 @@ public class PhaseBuilder(
         transitions          = transitions.toList(),
         isInitial            = isInitial,
         outputStructure      = outputStructure,
+        subphases            = subphaseBuilders.map { it.build() },
+        parallelGroups       = parallelGroups.map { group -> group.map { it.build() } },
     )
 }
+
+// ── ParallelBuilder ────────────────────────────────────────────────────────────
+
+/**
+ * Builder for parallel branches within a phase.
+ *
+ * Used via [PhaseBuilder.parallel]:
+ * ```kotlin
+ * parallel {
+ *     branch("location") { tool(GeocoderTool()) }
+ *     branch("device") { tool(LocaleTool()) }
+ * }
+ * ```
+ */
+public class ParallelBuilder(private val parentName: String) {
+    private val branchBuilders = mutableListOf<PhaseBuilder>()
+
+    /**
+     * Declares one branch in the parallel group.
+     * Each branch has its own isolated tool scope and runs simultaneously
+     * with all other branches in this group.
+     */
+    public fun branch(name: String, block: PhaseBuilder.() -> Unit) {
+        // Namespace as parentName__parallel__branchName
+        val qualifiedName = "${parentName}__parallel__$name"
+        branchBuilders.add(PhaseBuilder(qualifiedName).apply(block))
+    }
+
+    internal fun branches(): List<PhaseBuilder> = branchBuilders.toList()
+}
+
+// ── Reusable templates ─────────────────────────────────────────────────────────
+
+/**
+ * A reusable phase configuration.
+ *
+ * A template captures tools, instructions, and typed output for a common
+ * pattern so it can be included in multiple phases without duplication.
+ *
+ * Create with [phaseTemplate], include with [PhaseBuilder.include].
+ *
+ * ```kotlin
+ * val researchTemplate = phaseTemplate {
+ *     instructions { "Search the web and summarise findings." }
+ *     tool(WebSearchTool())
+ *     typedOutput<ResearchSummary>()
+ * }
+ *
+ * phases {
+ *     phase("answer_question") {
+ *         include(researchTemplate)          // pulls in tools + instructions
+ *         onCondition("done", "respond")
+ *     }
+ *     phase("draft_email") {
+ *         include(researchTemplate)          // same template, different phase
+ *         tool(EmailDraftTool())             // add phase-specific tools after
+ *         onCondition("draft ready", "review")
+ *     }
+ * }
+ * ```
+ */
+public class PhaseTemplate internal constructor(
+    internal val apply: PhaseBuilder.() -> Unit
+)
+
+/**
+ * Creates a [PhaseTemplate] from a [PhaseBuilder] configuration block.
+ * The block is applied lazily — evaluated each time [PhaseBuilder.include] is called.
+ */
+public fun phaseTemplate(block: PhaseBuilder.() -> Unit): PhaseTemplate =
+    PhaseTemplate(block)
+
+/**
+ * A template for a subphase — used with [PhaseBuilder.include] to add
+ * a named subphase from a reusable definition.
+ *
+ * ```kotlin
+ * val research = subphaseTemplate("research") {
+ *     instructions { "Search and summarise." }
+ *     tool(WebSearchTool())
+ *     typedOutput<ResearchSummary>()
+ * }
+ *
+ * phase("answer") {
+ *     include(research)   // equivalent to subphase("research") { ... }
+ * }
+ * ```
+ */
+public class SubphaseTemplate internal constructor(
+    public val name: String,
+    internal val apply: PhaseBuilder.() -> Unit
+)
+
+/** Creates a [SubphaseTemplate] with the given [name] and configuration [block]. */
+public fun subphaseTemplate(
+    name: String,
+    block: PhaseBuilder.() -> Unit
+): SubphaseTemplate = SubphaseTemplate(name, block)

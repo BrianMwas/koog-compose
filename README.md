@@ -5,9 +5,9 @@
 [![Kotlin](https://img.shields.io/badge/kotlin-2.3.20-purple.svg)](https://kotlinlang.org)
 [![KMP](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen.svg)](https://www.jetbrains.com/kotlin-multiplatform/)
 
-`koog-compose` is a developer-first Kotlin Multiplatform (KMP) runtime for building AI-driven features that orchestrate app logic, device capabilities, and UI from a single declarative DSL.
+A declarative Kotlin Multiplatform (KMP) runtime for building AI agents that orchestrate app logic, device capabilities, and UI — all from a single DSL.
 
-Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between AI agent graphs and real app surfaces — giving you typed shared state, phase-aware conversations, multi-agent handoff, plug-and-play persistence, token-level streaming, and Material 3 UI components that work across Android, iOS, and Desktop.
+Built on [JetBrains Koog](https://github.com/JetBrains/koog), it gives you typed shared state, phase-aware conversations with subphases and parallel branches, multi-agent handoff, plug-and-play persistence, token-level streaming, and Material 3 UI components that work across Android, iOS, and Desktop.
 
 ---
 
@@ -24,6 +24,9 @@ Built on top of [JetBrains Koog](https://github.com/JetBrains/koog), it bridges 
 | Raw exceptions surface to UI on failure | Retry with backoff + stuck detection + graceful fallback messages |
 | LLM hallucinated args crash your tool silently | `validateArgs()` blocks bad calls before execution |
 | Multi-agent routing is manual plumbing | `handoff(agentRef)` — one line to delegate to a specialist |
+| Flat phases pollute the graph with internal steps | `subphase { }` encapsulates sequential steps; the graph sees one phase |
+| Independent reads run sequentially | `parallel { branch { } }` fans out concurrent tool calls |
+| External triggers (push, deep links) need custom routing | `session.resumeAt("phaseName")` — one call from any platform trigger |
 
 ---
 
@@ -85,7 +88,7 @@ val context = koogCompose<AppState> {
     initialState { AppState(userId = currentUserId) }
 
     phases {
-        phase("greeting") {
+        phase("greeting", initial = true) {
             instructions { "Greet the user and offer to check their location." }
         }
         phase("location_check") {
@@ -108,22 +111,13 @@ val context = koogCompose<AppState> {
     }
 
     events {
-        onAgentStuck { event ->
-            // navigate to support, log analytics, etc.
-        }
-        onTurnFailed { event ->
-            // show error UI
-        }
-        onToolExecutionCompleted { event ->
-            // partial success — event.result has what succeeded before any failure
-        }
+        onAgentStuck { event -> /* navigate to support, log analytics, etc. */ }
+        onTurnFailed { event -> /* show error UI */ }
     }
 }
 ```
 
 ### 3. Write a stateful tool
-
-Extend `StatefulTool<S>` to read and mutate app state as a side effect of execution:
 
 ```kotlin
 class SendMoneyTool(
@@ -134,31 +128,22 @@ class SendMoneyTool(
     override val description = "Send money to a recipient"
     override val permissionLevel = PermissionLevel.CRITICAL
 
-    // Optional — validate LLM-supplied args before anything else runs
     override fun validateArgs(args: JsonObject): ValidationResult {
         val amount = args["amount"]?.toString()?.toDoubleOrNull()
             ?: return ValidationResult.Invalid("missing or non-numeric field: amount")
         if (amount <= 0) return ValidationResult.Invalid("amount must be greater than 0")
-
         args["recipientId"]
             ?: return ValidationResult.Invalid("missing required field: recipientId")
-
         return ValidationResult.Valid
     }
 
     override suspend fun execute(args: JsonObject): ToolResult {
-        // args are guaranteed valid here
         val amount = args["amount"]!!.toString().toDouble()
         val recipientId = args["recipientId"]!!.toString()
         return ToolResult.Success("Sent $amount to $recipientId")
     }
 }
 ```
-
-`validateArgs()` is optional — the default accepts all args, so existing tools need no
-changes. When validation fails, `GuardedTool` returns a `ToolResult.Failure` with your
-reason before guardrails, confirmation, or `execute()` are ever reached. The LLM sees
-the failure and can correct its args on the next iteration.
 
 ### 4. Run it from a ViewModel
 
@@ -179,51 +164,19 @@ class ChatViewModel(
     val lastResponse   = session.lastResponse    // StateFlow<String?>
     val currentPhase   = session.currentPhase    // StateFlow<String>
     val responseStream = session.responseStream  // Flow<String> — token by token
-    val turnId         = session.turnId          // StateFlow<Int> — increments per send()
     val appState       = session.appState        // StateFlow<AppState>?
     val error          = session.error           // StateFlow<Throwable?>
-    val toolCallCounts = session.toolCallCounts  // StateFlow<Map<String, Int>>
 }
 ```
 
-### 5. Streaming tokens in Compose
-
-`responseStream` emits tokens as they arrive from the LLM — wired directly into
-Koog's pipeline feature system via `StreamingFeature`. Use `turnId` to reset
-accumulation on each new `send()` call:
-
-```kotlin
-@Composable
-fun StreamingMessage(viewModel: ChatViewModel) {
-    val displayText by remember {
-        viewModel.turnId.flatMapLatest { _ ->
-            viewModel.responseStream
-                .runningFold("") { acc, token -> acc + token }
-        }
-    }.collectAsState(initial = "")
-
-    Text(text = displayText)
-}
-```
-
-If you only need the final assembled response:
-
-```kotlin
-val fullResponse by viewModel.lastResponse.collectAsState()
-```
-
-### 6. Add the Compose UI
+### 5. Add the Compose UI
 
 ```kotlin
 @Composable
 fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
-    val appState  by viewModel.appState.collectAsState()
-    val isRunning by viewModel.isRunning.collectAsState()
-
     val chatState = rememberChatState(viewModel.session)
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Handles SAFE / SENSITIVE / CRITICAL confirmation tiers automatically
     ConfirmationObserver(
         chatState = chatState,
         handler = rememberAutoConfirmationHandler(snackbarHostState)
@@ -238,56 +191,16 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
 }
 ```
 
-### 7. Add persistent memory (optional)
+### 6. Add persistent memory (optional)
 
 ```kotlin
 val session = PhaseSession(
     context   = context,
     executor  = executor,
     sessionId = "user_brian",
-    store     = RoomSessionStore(db.sessionDao()),  // swap InMemory for Room
+    store     = RoomSessionStore(db.sessionDao()),
     scope     = viewModelScope
 )
-```
-
----
-
-## How it works
-
-koog-compose is built as a thin, opinionated layer over [JetBrains Koog](https://github.com/JetBrains/koog). Every `koogCompose { }` block produces a live `AIAgent` with features installed:
-
-| Feature | Purpose |
-|---|---|
-| **ChatMemory** | Owns LLM conversation history. Loads from your `SessionStore` before each turn, saves after. Replaces manual `messageHistory` lists. |
-| **StreamingFeature** | Intercepts `TextDelta` frames from Koog's LLM pipeline and emits them as `Flow<String>` for real-time UI updates. |
-| **EventHandler** | Maps Koog's native lifecycle callbacks (`onToolCallStarting`, `onAgentCompleted`, etc.) into koog-compose's typed `KoogEvent` sealed hierarchy. |
-| **Persistence** (opt-in) | Captures complete agent state (history, current node, input data, timestamps) at each execution point. Supports rollback. Disabled by default — pass `persistenceStorage` to enable. |
-
-Phase subgraphs are built from your `phases { }` DSL into Koog's `AIAgentGraphStrategy`. Each phase becomes a subgraph with `nodeLLMRequest` → `nodeExecuteTool` → `nodeLLMSendToolResult` nodes, with optional `nodeLLMCompressHistory` between them. Phase transitions are captured as edges — the LLM triggers them by calling generated transition tools.
-
-```
-koogCompose { } DSL
-       │
-       ▼
-┌─────────────────────────┐
-│  KoogComposeContext     │  ← provider, phases, tools, config, events
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  PhaseAwareAgent        │  ← builds AIAgent with 3 features installed
-│  • ChatMemory           │     (ChatHistoryProvider → your SessionStore)
-│  • StreamingFeature     │     (TextDelta → responseStream Flow)
-│  • EventHandler         │     (Koog callbacks → KoogEvent dispatch)
-└────────┬────────────────┘
-         │
-         ▼
-┌─────────────────────────┐
-│  PhaseStrategyBuilder   │  ← phases → subgraphs with compression nodes
-└────────┬────────────────┘
-         │
-         ▼
-   Koog AIAgent runs ──► LLM calls, tool execution, phase transitions
 ```
 
 ---
@@ -296,7 +209,7 @@ koogCompose { } DSL
 
 ### Typed shared state
 
-`KoogStateStore<S>` is the single source of truth for your domain state. Tools update it via `stateStore.update { }`, and your Compose UI observes it via `session.appState` — a `StateFlow<S>`.
+`KoogStateStore<S>` is the single source of truth. Tools update it via `stateStore.update { }`, and your Compose UI observeses it via `session.appState` — a `StateFlow<S>`.
 
 ```
 Tool executes
@@ -313,11 +226,86 @@ A `Phase` is a named state in your conversation graph. Each phase carries its ow
 greeting ──► location_check ──► confirm_location ──► END
 ```
 
-Transitions are driven by the LLM reading the current `AppState` — you define the conditions, the agent decides when they're met.
+### Subphases — sequential steps inside one phase
+
+When a phase encapsulates multiple sequential steps, use `subphase { }` instead of polluting the top-level graph with internal implementation details. Subphases run in declaration order. Each has its own tool scope and optional typed output. The parent phase's `onCondition` transitions only fire after ALL subphases complete.
+
+```kotlin
+phase("checkout", initial = true) {
+    subphase("validate_cart") {
+        instructions { "Verify all items are in stock. Respond ONLY with JSON." }
+        tool(CheckInventoryTool())
+        typedOutput<CartValidation>()
+    }
+    subphase("process_payment") {
+        instructions { "Charge the card. Respond ONLY with JSON." }
+        tool(ChargeCardTool())   // only reachable in this subphase
+        typedOutput<PaymentResult>()
+    }
+    subphase("confirm_order") {
+        instructions { "Send order confirmation email." }
+        tool(SendEmailTool())
+    }
+    onCondition("order complete", "post_purchase")
+}
+phase("post_purchase") {
+    instructions { "Thank the user and offer tracking." }
+}
+```
+
+The phase graph only sees **checkout** → **post_purchase**. The three internal steps are invisible to the router.
+
+### Parallel branches — fan out independent reads
+
+When a phase needs multiple independent operations (location, device locale, permissions), use `parallel { branch { } }` to give the LLM access to all tools simultaneously. Many providers execute independent tool calls concurrently.
+
+```kotlin
+phase("gather_context", initial = true) {
+    parallel {
+        branch("location") {
+            tool(GeocoderTool())
+            typedOutput<LocationContext>()
+        }
+        branch("device") {
+            tool(LocaleTool())
+            tool(TimezoneTool())
+            typedOutput<DeviceContext>()
+        }
+        branch("permissions") {
+            tool(PermissionCheckTool())
+            typedOutput<PermissionContext>()
+        }
+    }
+    onCondition("context ready", "main")
+}
+```
+
+Branch results flow through `stateStore` — design branch tools to write their output to `stateStore.update { }` directly. The join happens automatically once all branch tools have been called.
+
+Multiple `parallel` blocks in one phase run sequentially (group 1 → group 2 → ...).
+
+### Resume at a phase from any external trigger
+
+`resumeAt("phaseName")` lets you jump into a specific phase from push notifications, deep links, background tasks, or any other external trigger. All platform triggers converge to this one call.
+
+```kotlin
+// From a push notification handler:
+session.resumeAt("notify_user", userMessage = "Your order has shipped!")
+
+// From a deep link — resume without a user message:
+session.resumeAt("onboarding_flow")
+
+// From a broadcast receiver:
+session.resumeAt("location_update", userMessage = "You're near a saved place")
+```
+
+When called without a `userMessage`, a sentinel is used internally so nothing pollutes conversation history. If the phase doesn't exist in any registered agent, the error is surfaced on `session.error` as `UnknownPhaseException`.
+
+Works on both single-agent (`PhaseSession`) and multi-agent (`SessionRunner`) runtimes.
 
 ### Tool references in instructions
 
-Use `[ToolName]` syntax in phase instructions to inject full tool schemas into the system prompt. The LLM gets precise knowledge of what tools it has and how to call them, without you repeating tool docs in every instruction block.
+Use `[ToolName]` syntax in phase instructions to inject full tool schemas into the system prompt.
 
 ```kotlin
 phase("payment") {
@@ -332,23 +320,40 @@ phase("payment") {
 }
 ```
 
-`[GetBalance]` is expanded to:
-```
-`get_balance` [SAFE]: Retrieves the current account balance for the authenticated user.
-  Parameters:
-    - account_id (String, required): The account to query.
-    - currency (String, optional): ISO currency code. Defaults to KES.
+`[GetBalance]` is expanded to the tool's full schema at build time. Matching is flexible — `[GetBalance]`, `[get_balance]`, and `[GetBalanceTool]` all resolve to the same tool.
+
+### Structured outputs
+
+Phases can declare a typed output schema. The LLM is primed with JSON Schema + examples, and the response is parsed into your Kotlin data class automatically.
+
+```kotlin
+@Serializable
+data class ExtractedIntent(
+    @LLMDescription("The user's primary intent")
+    val intent: String,
+    @LLMDescription("Confidence score between 0.0 and 1.0")
+    val confidence: Double,
+)
+
+phase("intent_extraction") {
+    instructions { "Analyze the user's message and extract intent." }
+    typedOutput<ExtractedIntent>(
+        retries = 3,
+        examples = listOf(ExtractedIntent("check_balance", 0.92)),
+        validate = { result ->
+            if (result.confidence < 0.5)
+                ValidationResult.Invalid("confidence too low: ${result.confidence}")
+            else ValidationResult.Valid
+        }
+    )
+}
 ```
 
-Matching is flexible — `[GetBalance]`, `[get_balance]`, and `[GetBalanceTool]` all resolve to the same tool. Unresolved references are left in-place with a `⚠ not registered` warning so you catch mismatches at dev time.
+Features: auto schema generation, retry with self-correction, schema versioning, markdown fence stripping.
 
 ### Arg validation
 
-`SecureTool` exposes an optional `validateArgs(args: JsonObject): ValidationResult` hook.
-`GuardedTool` runs it as step 0 — before rate limit checks, before confirmation dialogs,
-before `execute()`. A `ValidationResult.Invalid` response short-circuits the entire call
-and returns a `ToolResult.Failure` with your reason. The LLM sees the failure and can
-correct its args on the next iteration.
+`SecureTool` exposes an optional `validateArgs` hook that runs before guardrails, confirmation, or `execute()`.
 
 ```
 LLM delivers args
@@ -358,77 +363,35 @@ LLM delivers args
               → execute()   ← guaranteed valid args         (step 3)
 ```
 
-Existing tools that don't override `validateArgs()` are unaffected — the default returns
-`ValidationResult.Valid`.
+### Streaming
 
-### Structured outputs
-
-Phases can declare a typed output schema. The LLM is primed with the JSON schema + examples, and the response is parsed into your Kotlin data class automatically.
+`responseStream: Flow<String>` emits tokens as they arrive. Use `turnId` to reset accumulation on each new `send()`:
 
 ```kotlin
-@Serializable
-data class ExtractedIntent(
-    @LLMDescription("The user's primary intent")
-    val intent: String,
-
-    @LLMDescription("Confidence score between 0.0 and 1.0")
-    val confidence: Double,
-)
-
-phase("intent_extraction") {
-    instructions { "Analyze the user's message and extract intent." }
-    typedOutput<ExtractedIntent>(
-        retries = 3,
-        version = 1,
-        examples = listOf(
-            ExtractedIntent(intent = "check_balance", confidence = 0.92)
-        ),
-        validate = { result ->
-            if (result.confidence < 0.5) {
-                ValidationResult.Invalid("confidence too low: ${result.confidence}")
-            } else {
-                ValidationResult.Valid
-            }
+@Composable
+fun StreamingMessage(viewModel: ChatViewModel) {
+    val displayText by remember {
+        viewModel.turnId.flatMapLatest { _ ->
+            viewModel.responseStream
+                .runningFold("") { acc, token -> acc + token }
         }
-    )
+    }.collectAsState(initial = "")
+
+    Text(text = displayText)
 }
 ```
 
-Features:
-- **Auto schema generation** — JSON Schema generated from `@LLMDescription` annotations
-- **Retry with self-correction** — validation errors fed back to LLM so it can fix its output
-- **Schema versioning** — `version` parameter for evolving output types and analytics tracking
-- **Markdown fence stripping** — handles ```json fences gracefully
-
-One-shot extraction outside phases is also available via `runner.extract<T>()`.
-
-### Streaming
-
-`PhaseSession` exposes `responseStream: Flow<String>` that emits tokens as they arrive
-from the LLM. The tap is implemented as a Koog pipeline feature (`StreamingFeature`) that
-intercepts `TextDelta` frames from `ContextualPromptExecutor` — no polling, no executor
-wrapping. `lastResponse` always holds the full assembled string on completion. `turnId`
-increments on every `send()` so collectors know when to reset accumulation.
-
 ### Resilience
 
-`PhaseSession.send()` has two layers of protection against failures:
+**Retry with backoff** — on each failed attempt the agent is rebuilt. After exhaustion, `KoogEvent.TurnFailed` is dispatched.
 
-**Retry with backoff** — driven by `RetryPolicy` in `KoogConfig`. On each failed attempt
-the agent is rebuilt to avoid reusing a corrupted session. After all attempts are exhausted,
-`KoogEvent.TurnFailed` is dispatched and `error` is set.
-
-**Stuck detection** — tracks consecutive identical phase + input pairs. When the threshold
-is hit, `KoogEvent.AgentStuck` is dispatched, the fallback message is surfaced as
-`lastResponse`, and the stuck state resets — no raw error, no halt.
+**Stuck detection** — tracks consecutive identical phase + input pairs. When the threshold is hit, a fallback message is surfaced and the stuck state resets.
 
 ```kotlin
 config {
     retry {
         maxAttempts = 3
         initialDelayMs = 500L  // doubles on each attempt
-        useStructureFixingParser = true
-        structureFixingRetries = 3
     }
     stuckDetection {
         threshold = 3
@@ -439,8 +402,7 @@ config {
 
 ### Security tiers
 
-Every tool declares a `PermissionLevel`. `GuardrailEnforcer` intercepts all tool calls
-before execution and `AutoConfirmationHandler` maps tiers to the appropriate UI friction:
+Every tool declares a `PermissionLevel`. The confirmation handler maps tiers to UI friction:
 
 | Tier | UI treatment | Example |
 |---|---|---|
@@ -448,7 +410,7 @@ before execution and `AutoConfirmationHandler` maps tiers to the appropriate UI 
 | `SENSITIVE` | Bottom sheet confirmation | Sending a message, reading location |
 | `CRITICAL` | Full-screen dialog | Deleting data, making a purchase |
 
-Guardrails also enforce rate limits and action allowlists at the config level:
+Guardrails also enforce rate limits and action allowlists:
 
 ```kotlin
 config {
@@ -462,23 +424,14 @@ config {
 
 ### Multi-agent handoff
 
-Define specialist agents and register handoff tools in your main agent's phase. The LLM reads the handoff descriptions and calls them when appropriate — `SessionRunner` intercepts the call and swaps the active agent.
+Define specialist agents and register handoff tools. The LLM reads handoff descriptions and calls them when appropriate.
 
 ```kotlin
 val focusAgent = koogAgent("focus") {
-    instructions { "You are a focus session specialist. Suggest pomodoro techniques and encourage deep work." }
+    instructions { "You are a focus session specialist." }
     phases {
         phase("active") {
             instructions { "Help the user set up a focus session." }
-        }
-    }
-}
-
-val weatherAgent = koogAgent("weather") {
-    instructions { "You are a weather specialist. Provide friendly, brief forecasts." }
-    phases {
-        phase("active") {
-            instructions { "Give the user a brief weather update." }
         }
     }
 }
@@ -487,91 +440,53 @@ val session = koogSession<Unit> {
     provider { ollama(model = "llama3.2") }
 
     main {
-        instructions {
-            """
-            You are a general assistant. Route to specialists when:
-            - Focus or productivity → handoff to focus agent
-            - Weather or forecasts → handoff to weather agent
-            """.trimIndent()
-        }
+        instructions { "You are a general assistant." }
         phases {
             phase("root", initial = true) {
                 handoff(focusAgent) {
                     "User asks about focus, productivity, pomodoro, or concentration"
                 }
-                handoff(weatherAgent) {
-                    "User asks about weather or wants a forecast"
-                }
             }
         }
     }
 
-    agents(focusAgent, weatherAgent)
+    agents(focusAgent)
 }
 ```
 
-Handoff options:
-- **`description`** — natural language condition the LLM reads to decide when to call
-- **`continueHistory`** — if `true` (default), the specialist sees the full conversation; if `false`, it starts fresh
-- **`onHandoff`** — callback to mutate shared state before the swap
-
-### Tool call tracking
-
-Every tool call is tracked per session. Expose `toolCallCounts: StateFlow<Map<String, Int>>` from your session handle for analytics, usage quotas, and loop detection.
-
-```kotlin
-val counts by handle.toolCallCounts.collectAsState()
-println("get_balance called: ${counts["get_balance"] ?: 0} times")
-```
-
-Counts persist in `AgentSession` and reset on `session.reset()`.
+Handoff options: `description`, `continueHistory` (shared or fresh history), `onHandoff` callback.
 
 ### Privacy & data ownership
 
-koog-compose is designed so that **all data stays on the user's device by default**. Nothing is transmitted to external servers unless you explicitly wire it up.
-
-**What gets stored and where:**
+All data stays on the user's device by default. Nothing is transmitted externally unless you explicitly wire it up.
 
 | Data | Where it goes | User control |
 |---|---|---|
-| **Conversation history** | `SessionStore` — user picks `InMemory`, `Room`, `Redis`, or custom | Full ownership. Can `delete(sessionId)` or `reset()` anytime |
-| **Tool audit log** | In-memory `SharedFlow` only — never leaves device unless you subscribe and forward externally | `AuditLogger(redactArgs = true)` replaces raw args with `[REDACTED]` for PII-sensitive apps |
-| **Tool call counts** | In-memory `StateFlow` — per-session only | Resets on `reset()`. Not persisted to disk |
-| **Agent checkpoints (persistence)** | File-based, on user's device | **Opt-in** — disabled by default. Pass `persistenceStorage` to enable |
-| **Events** | Dispatched via `EventHandlers` — you decide what to wire | You own the handler registration |
+| Conversation history | `SessionStore` — InMemory, Room, Redis, or custom | Full ownership. `delete(sessionId)` or `reset()` anytime |
+| Tool audit log | In-memory `SharedFlow` only | `AuditLogger(redactArgs = true)` replaces raw args with `[REDACTED]` |
+| Tool call counts | In-memory `StateFlow` — per-session only | Resets on `reset()` |
+| Agent checkpoints (opt-in) | File-based, on user's device | Disabled by default. Pass `persistenceStorage` to enable |
+| Events | Dispatched via `EventHandlers` — you decide what to wire | You own the handler registration |
 
 **What koog-compose does NOT do:**
-
 - ❌ No network telemetry
 - ❌ No analytics sent to external servers
 - ❌ No prompts, responses, or tool args transmitted
 - ❌ No crash reporting
 
-**Audit log redaction for PII:**
-
-If your app handles sensitive data (phone numbers, addresses, auth tokens), enable args redaction:
+### Events
 
 ```kotlin
-val auditLogger = AuditLogger(redactArgs = true)
+events {
+    onTurnStarted { event -> }
+    onTurnCompleted { event -> }
+    onTurnFailed { event -> }
+    onPhaseTransitioned { event -> }
+    onToolCallRequested { event -> }
+    onToolExecutionCompleted { event -> }
+    onAgentStuck { event -> }
+}
 ```
-
-Tool names, outcomes, and timestamps are still logged so production monitoring works — just not the raw arguments. `AuditEntry.isRedacted` lets consumers detect redacted entries.
-
-### Persistence (opt-in)
-
-Agent checkpoints capture the complete state — message history, current graph node, input data, and timestamps — at each execution point. This is **disabled by default**. Enable it by passing a `FilePersistenceStorageProvider`:
-
-```kotlin
-val agent = PhaseAwareAgent.create(
-    context = ctx,
-    promptExecutor = executor,
-    sessionId = "session-1",
-    store = InMemorySessionStore(),
-    persistenceStorage = myFilePersistenceProvider,  // opt-in
-)
-```
-
-When enabled, all checkpoint data stays on the user's device. Nothing is transmitted externally. To disable persistence entirely, simply omit `persistenceStorage`.
 
 ### Session store
 
@@ -582,7 +497,6 @@ interface SessionStore {
     suspend fun load(sessionId: String): AgentSession?
     suspend fun save(sessionId: String, session: AgentSession)
     suspend fun delete(sessionId: String)
-    suspend fun exists(sessionId: String): Boolean
 }
 
 data class AgentSession(
@@ -590,8 +504,7 @@ data class AgentSession(
     val currentPhaseName: String,
     val messageHistory: List<SessionMessage>,
     val serializedState: String? = null,
-    val contextVars: Map<String, String> = emptyMap(),
-    val toolCallCounts: Map<String, Int> = emptyMap(),  // ← tracked per session
+    val toolCallCounts: Map<String, Int> = emptyMap(),
     val createdAt: Long,
     val updatedAt: Long
 )
@@ -599,90 +512,42 @@ data class AgentSession(
 
 The `:session-room` module provides a ready-made Room implementation.
 
-### Events
+---
 
-Observe runtime events via the `events { }` DSL block:
+## Testing
 
-```kotlin
-events {
-    onTurnStarted { event -> }
-    onTurnCompleted { event -> }
-    onTurnFailed { event -> }
-    onPhaseTransitioned { event -> }
-    onToolCallRequested { event -> }
-    onToolExecutionCompleted { event -> }  // partial success visibility
-    onAgentStuck { event -> }              // stuck detection fired
-    onProviderChunkReceived { event -> }
-}
-```
-
-### Testing
-
-`koog-compose-testing` gives you a deterministic harness for chat and phase flows.
-It keeps the real `PhaseSession` tool/phase loop but swaps the live provider for a
-scripted `FakePromptExecutor`, so you can prove transitions, tool calls, confirmation
-behavior, and shared-state mutation in unit tests without hitting a real model.
-
-#### Add the test dependency
+`koog-compose-testing` gives you a deterministic harness for chat and phase flows. It keeps the real `PhaseSession` tool/phase loop but swaps the live provider for a scripted `FakePromptExecutor`, so you can prove transitions, tool calls, and shared-state mutation without hitting a real model.
 
 ```kotlin
-// In your module's build.gradle.kts
-dependencies {
-    testImplementation(kotlin("test"))
-    testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(project(":koog-compose-testing"))
-}
-```
-
-#### Write your first test
-
-```kotlin
-import io.github.koogcompose.testing.testPhaseSession
-import io.github.koogcompose.testing.assertPhase
-import io.github.koogcompose.testing.assertToolCalled
-import io.github.koogcompose.testing.assertState
-import kotlin.test.Test
-import kotlin.test.assertEquals
-
-class MyFeatureTest {
-
-    @Test
-    fun `location request transitions to location_check phase`() {
-        val session = testPhaseSession(context) {
-            on("I need help with my location", phase = "greeting") {
-                transitionTo("location_check")
-                callTool("RecordLocationIntent")
-                respondWith("Sure, fetching location now.")
-            }
+@Test
+fun `location request transitions to location_check phase`() {
+    val session = testPhaseSession(context) {
+        on("I need help with my location", phase = "greeting") {
+            transitionTo("location_check")
+            callTool("RecordLocationIntent")
+            respondWith("Sure, fetching location now.")
         }
+    }
 
-        session.send("I need help with my location")
+    session.send("I need help with my location")
 
-        assertPhase(session, "location_check")
-        assertToolCalled(session, "RecordLocationIntent")
-        assertState(session) { state ->
-            assertEquals(Intent.LOCATION_REQUEST, state.intent)
-        }
+    assertPhase(session, "location_check")
+    assertToolCalled(session, "RecordLocationIntent")
+    assertState(session) { state ->
+        assertEquals(Intent.LOCATION_REQUEST, state.intent)
     }
 }
 ```
 
-#### Simple text-only turns
-
-When a turn doesn't involve tools or transitions:
-
+Simple text-only turns:
 ```kotlin
 val session = testPhaseSession(context) {
     on("Hello") respondWith "Hi there."
 }
-
 session.send("Hello")
 ```
 
-#### Test denial flows
-
-Make confirmation behavior deterministic with `AutoDenyConfirmationHandler`:
-
+Test denial flows:
 ```kotlin
 val session = testPhaseSession(
     context = context,
@@ -694,66 +559,11 @@ val session = testPhaseSession(
         respondWith("I could not access location.")
     }
 }
-
 session.send("Share my location")
 assertGuardrailDenied(session, "RecordLocationIntent")
 ```
 
-#### Test structured output
-
-Verify that typed phase outputs parse correctly:
-
-```kotlin
-@Serializable
-data class ExtractedIntent(val name: String, val confidence: Double)
-
-@Test
-fun `extracts intent from user message`() {
-    val context = testContext {
-        phases {
-            phase("extract") {
-                instructions { "Extract the user's intent as JSON." }
-                typedOutput<ExtractedIntent>(
-                    validate = {
-                        if (it.confidence < 0.5)
-                            ValidationResult.Invalid("confidence too low")
-                        else ValidationResult.Valid
-                    }
-                )
-            }
-        }
-    }
-
-    val session = testPhaseSession(context) {
-        on("I want to check my balance") respondWith
-            """{"name": "check_balance", "confidence": 0.92}"""
-    }
-
-    session.send("I want to check my balance")
-    // Validation passes — no exception thrown
-}
-```
-
-#### Test audit logging and tool counts
-
-```kotlin
-@Test
-fun `audit log tracks approved and denied calls`() {
-    val session = testPhaseSession(context) {
-        on("Send money", phase = "root") {
-            callTool("SendMoney")
-            respondWith("Done.")
-        }
-    }
-
-    session.send("Send money")
-
-    assertEquals(1, session.auditLogger.approvedCount)
-    assertEquals(0, session.auditLogger.deniedCount)
-}
-```
-
-#### Available test assertions
+### Available test assertions
 
 | Assertion | Purpose |
 |---|---|
@@ -763,7 +573,7 @@ fun `audit log tracks approved and denied calls`() {
 | `assertState(session) { state -> ... }` | Assert against the typed app state |
 | `assertEventDispatched(session) { event -> ... }` | Verify a specific KoogEvent was fired |
 
-#### Run tests
+### Running tests
 
 ```bash
 # Run all desktop tests (fastest — no Android emulator needed)
@@ -772,30 +582,55 @@ fun `audit log tracks approved and denied calls`() {
 # Run a single test class
 ./gradlew :koog-compose-core:desktopTest \
     --tests "io.github.koogcompose.phase.PhaseOutputTest"
-
-# Run tests matching a pattern
-./gradlew :koog-compose-core:desktopTest \
-    --tests "*AuditLoggerTest" \
-    --tests "*HandoffToolTest"
-
-# Run all project tests
-./gradlew test
-
-# Run Android instrumented tests (requires connected device/emulator)
-./gradlew :koog-compose-core:connectedAndroidTest
 ```
 
-#### Test the sample app
+---
 
-```bash
-# Build the sample app for Android
-./gradlew :sample-app:assembleDebug
+## Architecture
 
-# Build for iOS Simulator
-./gradlew :sample-app:assembleDebugIosSim
+koog-compose is a thin, opinionated layer over [JetBrains Koog](https://github.com/JetBrains/koog). Every `koogCompose { }` block produces a live `AIAgent` with four features installed:
+
+| Feature | Purpose |
+|---|---|
+| **ChatMemory** | Owns LLM conversation history. Loads from your `SessionStore` before each turn, saves after. |
+| **StreamingFeature** | Intercepts `TextDelta` frames and emits them as `Flow<String>` for real-time UI updates. |
+| **EventHandler** | Maps Koog's native lifecycle callbacks into koog-compose's typed `KoogEvent` sealed hierarchy. |
+| **Persistence** (opt-in) | Captures complete agent state at each execution point. Supports rollback. Disabled by default. |
+
+Each phase (or subphase, or parallel branch group) becomes a Koog subgraph with `nodeLLMRequest` → `nodeExecuteTool` → `nodeLLMSendToolResult` nodes, with optional `nodeLLMCompressHistory` between them. Phase transitions are captured as edges — the LLM triggers them by calling generated transition tools.
+
+```
+koogCompose { } DSL
+       │
+       ▼
+┌─────────────────────────┐
+│  KoogComposeContext     │  ← provider, phases, tools, config, events
+└────────┬────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│  PhaseAwareAgent        │  ← builds AIAgent with 4 features installed
+│  • ChatMemory           │     (ChatHistoryProvider → your SessionStore)
+│  • StreamingFeature     │     (TextDelta → responseStream Flow)
+│  • EventHandler         │     (Koog callbacks → KoogEvent dispatch)
+│  • Persistence (opt-in) │     (file-based checkpoints on device)
+└────────┬────────────────┘
+         │
+         ▼
+┌─────────────────────────┐
+│  PhaseStrategyBuilder   │  ← phases / subphases / parallel → subgraphs
+│  • buildFlatSubgraph    │     with optional compression nodes
+│  • buildMultiStep       │
+│  • buildParallel        │
+└────────┬────────────────┘
+         │
+         ▼
+   Koog AIAgent runs ──► LLM calls, tool execution, phase transitions
 ```
 
-### Stateless sessions
+---
+
+## Stateless sessions
 
 If you don't need shared state, omit `initialState { }` and use the `Unit` overload:
 
@@ -819,6 +654,9 @@ val context = koogCompose {
 | Retry & stuck detection | ✅ | ✅ | ✅ |
 | Arg validation | ✅ | ✅ | ✅ |
 | Structured outputs | ✅ | ✅ | ✅ |
+| Subphases (sequential) | ✅ | ✅ | ✅ |
+| Parallel branches | ✅ | ✅ | ✅ |
+| Resume at phase | ✅ | ✅ | ✅ |
 | Multi-agent handoff | ✅ | ✅ | ✅ |
 | Tool call tracking | ✅ | ✅ | ✅ |
 | Audit log redaction | ✅ | ✅ | ✅ |
@@ -830,25 +668,6 @@ val context = koogCompose {
 
 ---
 
-## Build & test
-
-```bash
-# Run common (KMP) tests
-./gradlew :koog-compose-core:desktopTest
-
-# Run Android instrumented tests
-./gradlew :koog-compose-core:connectedAndroidTest
-
-# Run the CMP sample app (Android or iOS)
-./gradlew :sample-app:assembleDebug        # Android
-./gradlew :sample-app:assembleDebugIosSim  # iOS Simulator
-
-# Generate KDoc
-./gradlew dokkaHtml
-```
-
----
-
 ## Roadmap
 
 ### v0.3 (current)
@@ -857,6 +676,9 @@ val context = koogCompose {
 - ✅ Tool call frequency tracking per session
 - ✅ Multi-agent handoff via `handoff(agentRef)`
 - ✅ `[ToolName]` reference resolution in phase instructions
+- ✅ Subphases — sequential steps inside a single phase
+- ✅ Parallel branches — fan out independent tool calls
+- ✅ `resumeAt()` — jump to any phase from external triggers
 - ✅ Rich JSON Schema tool parameter types (String, Integer, Boolean, Enum, Array, Object)
 - ✅ Privacy & data ownership — all data stays on device by default
 - ✅ Audit log args redaction for PII-sensitive apps

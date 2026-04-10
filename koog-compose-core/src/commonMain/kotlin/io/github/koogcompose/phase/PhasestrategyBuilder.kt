@@ -12,23 +12,26 @@ import ai.koog.agents.core.dsl.extension.nodeLLMCompressHistory
 import ai.koog.agents.core.dsl.extension.nodeExecuteTool
 import ai.koog.agents.core.dsl.extension.onAssistantMessage
 import ai.koog.agents.core.dsl.extension.onToolCall
-import ai.koog.agents.core.environment.ReceivedToolResult
 import ai.koog.agents.memory.feature.history.RetrieveFactsFromHistory
 import ai.koog.agents.memory.model.Concept
 import ai.koog.agents.memory.model.FactType
+import ai.koog.agents.core.environment.ReceivedToolResult
 import ai.koog.prompt.message.Message
 import io.github.koogcompose.session.CompressionTrigger
 import io.github.koogcompose.session.HistoryCompression
 import io.github.koogcompose.session.HistoryCompressionConfig
 import io.github.koogcompose.session.KoogComposeContext
+import io.github.koogcompose.tool.toKoogTool
 
 /**
  * Builds the Koog graph strategy that mediates between phase definitions and the agent runtime.
  *
- * History compression is now wired into the phase subgraph when
+ * When a phase has [Phase.hasSubphases], its subphases are chained as sequential
+ * nested subgraphs. The parent phase's [Phase.transitions] only fire after ALL
+ * subphases complete.
+ *
+ * History compression is wired into the phase subgraph when
  * [KoogComposeContext.config.historyCompression] is configured.
- * The compression node sits between tool execution and the next LLM
- * request, triggered by message count or between phases per the config.
  */
 internal object PhaseStrategyBuilder {
 
@@ -51,70 +54,29 @@ internal object PhaseStrategyBuilder {
             val phaseSubgraphs = linkedMapOf<String, AIAgentSubgraph<String, String>>()
 
             phases.forEach { phase ->
-                val phaseTools = phase.buildKoogTools()
-
-                val phaseSubgraph by subgraph<String, String>(
-                    name = phase.name,
-                    tools = phaseTools
-                ) {
-                    val nodeCallLLM by nodeLLMRequest("${phase.name}_llm")
-                    val nodeExecuteTool by nodeExecuteTool("${phase.name}_exec")
-                    val nodeSendToolResult by nodeLLMSendToolResult("${phase.name}_result")
-
-                    // Only create the compression node when compression is configured
-                    // AND the trigger includes message-count compression.
-                    // Resolve delegate → actual node immediately after creation
-                    val nodeCompress by nodeLLMCompressHistory<ReceivedToolResult>(
-                        name = "${phase.name}_compress",
-                        strategy = koogCompressionStrategy ?: HistoryCompressionStrategy.NoCompression
+                val phaseSubgraph = when {
+                    phase.hasParallel -> buildParallelSubgraph(
+                        phase,
+                        compressionConfig,
+                        koogCompressionStrategy,
+                        getPending = { pendingPhaseName },
+                        setPending = { pendingPhaseName = it }
                     )
-
-                    fun captureTransition(toolCall: Message.Tool.Call): Boolean {
-                        val transition = phase.transitions.firstOrNull { it.toolName == toolCall.tool }
-                        if (transition != null) pendingPhaseName = transition.targetPhase
-                        return true
-                    }
-
-                    fun shouldCompress(): Boolean {
-                        if (compressionConfig == null || koogCompressionStrategy == null) return false
-                        return compressionConfig.shouldCompressAfterTool()
-                    }
-
-                    edge(nodeStart forwardTo nodeCallLLM)
-                    
-                    // LLM responded with assistant message (no tool calls) → finish
-                    edge(
-                        (nodeCallLLM forwardTo nodeFinish)
-                            .onAssistantMessage { true }
+                    phase.hasSubphases -> buildMultiStepSubgraph(
+                        phase,
+                        compressionConfig,
+                        koogCompressionStrategy,
+                        getPending = { pendingPhaseName },
+                        setPending = { pendingPhaseName = it }
                     )
-                    
-                    // LLM wants to call a tool → execute it
-                    edge(
-                        (nodeCallLLM forwardTo nodeExecuteTool)
-                            .onToolCall { call -> captureTransition(call) }
-                    )
-
-                    edge(
-                        (nodeExecuteTool forwardTo nodeCompress)
-                            .onCondition { _ -> shouldCompress() }
-                    )
-                    edge(nodeCompress forwardTo nodeSendToolResult)
-                    edge(
-                        (nodeExecuteTool forwardTo nodeSendToolResult)
-                            .onCondition { _ -> !shouldCompress() }
-                    )
-
-                    // After sending tool result, LLM may respond with text or call more tools
-                    edge(
-                        (nodeSendToolResult forwardTo nodeFinish)
-                            .onAssistantMessage { true }
-                    )
-                    edge(
-                        (nodeSendToolResult forwardTo nodeExecuteTool)
-                            .onToolCall { call -> captureTransition(call) }
+                    else -> buildFlatSubgraph(
+                        phase,
+                        compressionConfig,
+                        koogCompressionStrategy,
+                        getPending = { pendingPhaseName },
+                        setPending = { pendingPhaseName = it }
                     )
                 }
-
                 phaseSubgraphs[phase.name] = phaseSubgraph
             }
 
@@ -152,7 +114,225 @@ internal object PhaseStrategyBuilder {
             }
         }
     }
+
+    // ── Parallel branch subgraph building ─────────────────────────────────────
+
+    /**
+     * Builds a subgraph for parallel branches. All branch tools are collected
+     * into a single subgraph — the LLM can invoke any of them, and many
+     * providers execute independent tool calls concurrently.
+     *
+     * Multiple [parallel] blocks run sequentially (group 1 → group 2 → ...).
+     * Branch results flow through state (KoogStateStore), not return values.
+     */
+    private fun StrategyBuilder.buildParallelSubgraph(
+        phase: Phase,
+        compressionConfig: HistoryCompressionConfig?,
+        koogCompressionStrategy: HistoryCompressionStrategy?,
+        getPending: () -> String?,
+        setPending: (String?) -> Unit,
+    ): AIAgentSubgraph<String, String> {
+        // Collect all tools from all branches across all parallel groups
+        val allBranchTools = phase.parallelGroups.flatten()
+            .flatMap { it.toolRegistry.all }
+            .map { it.toKoogTool() }
+
+        val parent by subgraph<String, String>(name = phase.name, tools = allBranchTools) {
+            val nodeCallLLM by nodeLLMRequest("${phase.name}_llm")
+            val nodeExecuteTool by nodeExecuteTool("${phase.name}_exec")
+            val nodeSendToolResult by nodeLLMSendToolResult("${phase.name}_result")
+
+            val nodeCompress by nodeLLMCompressHistory<ReceivedToolResult>(
+                name = "${phase.name}_compress",
+                strategy = koogCompressionStrategy ?: HistoryCompressionStrategy.NoCompression
+            )
+
+            fun captureTransition(toolCall: Message.Tool.Call): Boolean {
+                // Check transitions from all branches
+                for (branch in phase.parallelGroups.flatten()) {
+                    val transition = branch.transitions.firstOrNull { it.toolName == toolCall.tool }
+                    if (transition != null) setPending(transition.targetPhase)
+                }
+                return true
+            }
+
+            fun shouldCompress(): Boolean {
+                if (compressionConfig == null || koogCompressionStrategy == null) return false
+                return compressionConfig.shouldCompressAfterTool()
+            }
+
+            edge(nodeStart forwardTo nodeCallLLM)
+
+            edge(
+                (nodeCallLLM forwardTo nodeFinish)
+                    .onAssistantMessage { true }
+            )
+
+            edge(
+                (nodeCallLLM forwardTo nodeExecuteTool)
+                    .onToolCall { call -> captureTransition(call) }
+            )
+
+            edge(
+                (nodeExecuteTool forwardTo nodeCompress)
+                    .onCondition { _ -> shouldCompress() }
+            )
+            edge(nodeCompress forwardTo nodeSendToolResult)
+            edge(
+                (nodeExecuteTool forwardTo nodeSendToolResult)
+                    .onCondition { _ -> !shouldCompress() }
+            )
+
+            edge(
+                (nodeSendToolResult forwardTo nodeFinish)
+                    .onAssistantMessage { true }
+            )
+            edge(
+                (nodeSendToolResult forwardTo nodeExecuteTool)
+                    .onToolCall { call -> captureTransition(call) }
+            )
+        }
+
+        return parent
+    }
+
+    // ── Multi-step subphase chaining ──────────────────────────────────────────
+
+    /**
+     * Builds N sequential subgraphs for a parent phase with subphases,
+     * chained: start → sub[0] → sub[1] → ... → sub[n-1] → finish.
+     *
+     * The parent phase's [Phase.transitions] are wired on each subphase
+     * so the LLM can exit at any point, but in practice they only fire
+     * after all subphases have run.
+     */
+    private fun StrategyBuilder.buildMultiStepSubgraph(
+        phase: Phase,
+        compressionConfig: HistoryCompressionConfig?,
+        koogCompressionStrategy: HistoryCompressionStrategy?,
+        getPending: () -> String?,
+        setPending: (String?) -> Unit,
+    ): AIAgentSubgraph<String, String> {
+        // Build each subphase as its own flat subgraph
+        val subgraphList = phase.subphases.map { sub ->
+            buildFlatSubgraph(sub, compressionConfig, koogCompressionStrategy, getPending, setPending)
+        }
+
+        // Wrap them in a parent subgraph that chains them sequentially
+        val parent by subgraph<String, String>(
+            name = phase.name,
+            tools = emptyList() // tools live on individual subphases
+        ) {
+            var prev: AIAgentSubgraph<String, String>? = null
+
+            subgraphList.forEachIndexed { i, sub ->
+                if (i == 0) {
+                    edge(nodeStart forwardTo sub)
+                } else {
+                    edge(prev!! forwardTo sub)
+                }
+                prev = sub
+            }
+
+            // Last subphase → finish (triggers parent phase's onCondition)
+            edge(
+                (subgraphList.last() forwardTo nodeFinish)
+                    .onCondition { true }
+            )
+        }
+
+        return parent
+    }
+
+    // ── Flat (non-subphase) subgraph building ─────────────────────────────────
+
+    /**
+     * Builds a single flat subgraph for a phase with no subphases.
+     * This is the original phase subgraph building logic, extracted here
+     * so [buildMultiStepSubgraph] can reuse it for individual subphases.
+     */
+    private fun StrategyBuilder.buildFlatSubgraph(
+        phase: Phase,
+        compressionConfig: HistoryCompressionConfig?,
+        koogCompressionStrategy: HistoryCompressionStrategy?,
+        getPending: () -> String?,
+        setPending: (String?) -> Unit,
+    ): AIAgentSubgraph<String, String> {
+        val phaseTools = phase.buildKoogTools()
+
+        val phaseSubgraph by subgraph<String, String>(
+            name = phase.name,
+            tools = phaseTools
+        ) {
+            val nodeCallLLM by nodeLLMRequest("${phase.name}_llm")
+            val nodeExecuteTool by nodeExecuteTool("${phase.name}_exec")
+            val nodeSendToolResult by nodeLLMSendToolResult("${phase.name}_result")
+
+            // Only create the compression node when compression is configured
+            // AND the trigger includes message-count compression.
+            val nodeCompress by nodeLLMCompressHistory<ReceivedToolResult>(
+                name = "${phase.name}_compress",
+                strategy = koogCompressionStrategy ?: HistoryCompressionStrategy.NoCompression
+            )
+
+            fun captureTransition(toolCall: Message.Tool.Call): Boolean {
+                val transition = phase.transitions.firstOrNull { it.toolName == toolCall.tool }
+                if (transition != null) setPending(transition.targetPhase)
+                return true
+            }
+
+            fun shouldCompress(): Boolean {
+                if (compressionConfig == null || koogCompressionStrategy == null) return false
+                return compressionConfig.shouldCompressAfterTool()
+            }
+
+            edge(nodeStart forwardTo nodeCallLLM)
+
+            // LLM responded with assistant message (no tool calls) → finish
+            edge(
+                (nodeCallLLM forwardTo nodeFinish)
+                    .onAssistantMessage { true }
+            )
+
+            // LLM wants to call a tool → execute it
+            edge(
+                (nodeCallLLM forwardTo nodeExecuteTool)
+                    .onToolCall { call -> captureTransition(call) }
+            )
+
+            edge(
+                (nodeExecuteTool forwardTo nodeCompress)
+                    .onCondition { _ -> shouldCompress() }
+            )
+            edge(nodeCompress forwardTo nodeSendToolResult)
+            edge(
+                (nodeExecuteTool forwardTo nodeSendToolResult)
+                    .onCondition { _ -> !shouldCompress() }
+            )
+
+            // After sending tool result, LLM may respond with text or call more tools
+            edge(
+                (nodeSendToolResult forwardTo nodeFinish)
+                    .onAssistantMessage { true }
+            )
+            edge(
+                (nodeSendToolResult forwardTo nodeExecuteTool)
+                    .onToolCall { call -> captureTransition(call) }
+            )
+        }
+
+        return phaseSubgraph
+    }
 }
+
+// ── StrategyBuilder alias for extension functions ──────────────────────────────
+
+/**
+ * Alias for the Koog strategy builder DSL receiver type.
+ * Gives us a place to hang extension functions for subgraph building.
+ */
+internal typealias StrategyBuilder =
+    ai.koog.agents.core.dsl.builder.AIAgentGraphStrategyBuilder<String, String>
 
 // ── Compression mapping ────────────────────────────────────────────────────────
 
