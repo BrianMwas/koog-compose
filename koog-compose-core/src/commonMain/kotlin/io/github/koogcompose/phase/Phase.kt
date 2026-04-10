@@ -187,9 +187,22 @@ public class PhaseRegistry private constructor(
 
 // ── PhaseBuilder ───────────────────────────────────────────────────────────────
 
-public class PhaseBuilder(
+// ── Nesting level guard ──────────────────────────────────────────────────────
+
+/** Defines what nesting is allowed in a PhaseBuilder context. */
+internal enum class PhaseBuilderContext {
+    /** Top-level phase — allows subphase, parallel, and transitions. */
+    TopLevel,
+    /** Subphase of a phase — no further nesting allowed. */
+    Subphase,
+    /** Branch of a parallel group — no nesting allowed. */
+    ParallelBranch,
+}
+
+public class PhaseBuilder internal constructor(
     private val name: String,
     private val isInitial: Boolean = false,
+    private val context: PhaseBuilderContext = PhaseBuilderContext.TopLevel,
 ) {
     private var instructions: String = ""
     private val toolRegistryBuilder = ToolRegistry.Builder()
@@ -202,6 +215,9 @@ public class PhaseBuilder(
     public fun tools(block: ToolRegistry.Builder.() -> Unit) { toolRegistryBuilder.apply(block) }
     public fun tool(tool: SecureTool) { toolRegistryBuilder.register(tool) }
     public fun onCondition(on: String, targetPhase: String) {
+        require(context == PhaseBuilderContext.TopLevel) {
+            "koog-compose: onCondition() is only allowed on top-level phases, not on '$name' (context: $context)."
+        }
         transitions.add(PhaseTransition(targetPhase, on))
     }
 
@@ -266,9 +282,13 @@ public class PhaseBuilder(
         name: String,
         block: PhaseBuilder.() -> Unit
     ) {
+        require(context == PhaseBuilderContext.TopLevel) {
+            "koog-compose: subphase { } can only be declared on a top-level phase. " +
+                "'$name' is nested inside another phase (context: $context)."
+        }
         // Namespace as parentName__subphaseName to avoid collisions
         val qualifiedName = "${this.name}__$name"
-        subphaseBuilders.add(PhaseBuilder(qualifiedName).apply(block))
+        subphaseBuilders.add(PhaseBuilder(qualifiedName, context = PhaseBuilderContext.Subphase).apply(block))
     }
 
     /**
@@ -301,6 +321,9 @@ public class PhaseBuilder(
      * ```
      */
     public fun parallel(block: ParallelBuilder.() -> Unit) {
+        require(context == PhaseBuilderContext.TopLevel) {
+            "koog-compose: parallel { } can only be declared on a top-level phase, not on '$name' (context: $context)."
+        }
         val builder = ParallelBuilder(this.name).apply(block)
         parallelGroups.add(builder.branches())
     }
@@ -322,6 +345,9 @@ public class PhaseBuilder(
      * Equivalent to calling `subphase(template.name) { template.apply(this) }`.
      */
     public fun include(template: SubphaseTemplate) {
+        require(context == PhaseBuilderContext.TopLevel) {
+            "koog-compose: include(SubphaseTemplate) can only be called on a top-level phase, not on '$name' (context: $context)."
+        }
         subphase(template.name) { template.apply(this) }
     }
 
@@ -362,7 +388,7 @@ public class ParallelBuilder(private val parentName: String) {
     public fun branch(name: String, block: PhaseBuilder.() -> Unit) {
         // Namespace as parentName__parallel__branchName
         val qualifiedName = "${parentName}__parallel__$name"
-        branchBuilders.add(PhaseBuilder(qualifiedName).apply(block))
+        branchBuilders.add(PhaseBuilder(qualifiedName, context = PhaseBuilderContext.ParallelBranch).apply(block))
     }
 
     internal fun branches(): List<PhaseBuilder> = branchBuilders.toList()

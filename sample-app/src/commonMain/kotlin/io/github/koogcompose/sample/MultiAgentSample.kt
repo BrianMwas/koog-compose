@@ -30,11 +30,6 @@ import io.github.koogcompose.session.koogAgent
 import io.github.koogcompose.session.koogSession
 import io.github.koogcompose.session.multiAgentHandle
 import io.github.koogcompose.phase.handoff
-import io.github.koogcompose.tool.handoff
-import io.github.koogcompose.ui.components.ChatInputBar
-import io.github.koogcompose.ui.components.ChatMessageList
-import io.github.koogcompose.ui.events.EventObserver
-import io.github.koogcompose.ui.state.rememberChatState
 
 @Composable
 fun MultiAgentSample(

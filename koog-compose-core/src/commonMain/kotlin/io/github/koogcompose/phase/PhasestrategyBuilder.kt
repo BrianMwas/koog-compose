@@ -7,15 +7,19 @@ import ai.koog.agents.core.dsl.builder.strategy
 import ai.koog.agents.core.dsl.builder.subgraph
 import ai.koog.agents.core.dsl.extension.HistoryCompressionStrategy
 import ai.koog.agents.core.dsl.extension.nodeLLMRequest
+import ai.koog.agents.core.dsl.extension.nodeLLMRequestMultiple
 import ai.koog.agents.core.dsl.extension.nodeLLMSendToolResult
+import ai.koog.agents.core.dsl.extension.nodeLLMSendMultipleToolResults
 import ai.koog.agents.core.dsl.extension.nodeLLMCompressHistory
 import ai.koog.agents.core.dsl.extension.nodeExecuteTool
+import ai.koog.agents.core.dsl.extension.nodeExecuteMultipleTools
 import ai.koog.agents.core.dsl.extension.onAssistantMessage
 import ai.koog.agents.core.dsl.extension.onToolCall
+import ai.koog.agents.core.dsl.extension.onMultipleToolCalls
+import ai.koog.agents.core.environment.ReceivedToolResult
 import ai.koog.agents.memory.feature.history.RetrieveFactsFromHistory
 import ai.koog.agents.memory.model.Concept
 import ai.koog.agents.memory.model.FactType
-import ai.koog.agents.core.environment.ReceivedToolResult
 import ai.koog.prompt.message.Message
 import io.github.koogcompose.session.CompressionTrigger
 import io.github.koogcompose.session.HistoryCompression
@@ -29,6 +33,10 @@ import io.github.koogcompose.tool.toKoogTool
  * When a phase has [Phase.hasSubphases], its subphases are chained as sequential
  * nested subgraphs. The parent phase's [Phase.transitions] only fire after ALL
  * subphases complete.
+ *
+ * When a phase has [Phase.hasParallel], all branch tools are collected into a
+ * single subgraph where tool calls execute in parallel via
+ * [nodeExecuteMultipleTools] with `parallelTools = true`.
  *
  * History compression is wired into the phase subgraph when
  * [KoogComposeContext.config.historyCompression] is configured.
@@ -119,11 +127,12 @@ internal object PhaseStrategyBuilder {
 
     /**
      * Builds a subgraph for parallel branches. All branch tools are collected
-     * into a single subgraph — the LLM can invoke any of them, and many
-     * providers execute independent tool calls concurrently.
+     * into a single subgraph where tool calls execute in parallel via
+     * [nodeExecuteMultipleTools] with `parallelTools = true`.
      *
      * Multiple [parallel] blocks run sequentially (group 1 → group 2 → ...).
-     * Branch results flow through state (KoogStateStore), not return values.
+     * Branch results flow through state (KoogStateStore) — design branch tools
+     * to write their output to `stateStore.update { }` directly.
      */
     private fun StrategyBuilder.buildParallelSubgraph(
         phase: Phase,
@@ -138,20 +147,21 @@ internal object PhaseStrategyBuilder {
             .map { it.toKoogTool() }
 
         val parent by subgraph<String, String>(name = phase.name, tools = allBranchTools) {
-            val nodeCallLLM by nodeLLMRequest("${phase.name}_llm")
-            val nodeExecuteTool by nodeExecuteTool("${phase.name}_exec")
-            val nodeSendToolResult by nodeLLMSendToolResult("${phase.name}_result")
+            val nodeCallLLM by nodeLLMRequestMultiple("${phase.name}_llm_parallel")
+            val nodeExecuteTools by nodeExecuteMultipleTools("${phase.name}_exec_parallel", parallelTools = true)
+            val nodeSendToolResults by nodeLLMSendMultipleToolResults("${phase.name}_results")
 
-            val nodeCompress by nodeLLMCompressHistory<ReceivedToolResult>(
+            val nodeCompress by nodeLLMCompressHistory<List<ReceivedToolResult>>(
                 name = "${phase.name}_compress",
                 strategy = koogCompressionStrategy ?: HistoryCompressionStrategy.NoCompression
             )
 
-            fun captureTransition(toolCall: Message.Tool.Call): Boolean {
-                // Check transitions from all branches
-                for (branch in phase.parallelGroups.flatten()) {
-                    val transition = branch.transitions.firstOrNull { it.toolName == toolCall.tool }
-                    if (transition != null) setPending(transition.targetPhase)
+            fun captureTransitions(toolCalls: List<Message.Tool.Call>): Boolean {
+                for (toolCall in toolCalls) {
+                    for (branch in phase.parallelGroups.flatten()) {
+                        val transition = branch.transitions.firstOrNull { it.toolName == toolCall.tool }
+                        if (transition != null) setPending(transition.targetPhase)
+                    }
                 }
                 return true
             }
@@ -163,33 +173,36 @@ internal object PhaseStrategyBuilder {
 
             edge(nodeStart forwardTo nodeCallLLM)
 
+            // LLM responded with assistant message (no tool calls) → finish
             edge(
                 (nodeCallLLM forwardTo nodeFinish)
                     .onAssistantMessage { true }
             )
 
+            // LLM wants to call tools → execute all in parallel
             edge(
-                (nodeCallLLM forwardTo nodeExecuteTool)
-                    .onToolCall { call -> captureTransition(call) }
+                (nodeCallLLM forwardTo nodeExecuteTools)
+                    .onMultipleToolCalls { calls -> captureTransitions(calls) }
             )
 
             edge(
-                (nodeExecuteTool forwardTo nodeCompress)
+                (nodeExecuteTools forwardTo nodeCompress)
                     .onCondition { _ -> shouldCompress() }
             )
-            edge(nodeCompress forwardTo nodeSendToolResult)
+            edge(nodeCompress forwardTo nodeSendToolResults)
             edge(
-                (nodeExecuteTool forwardTo nodeSendToolResult)
+                (nodeExecuteTools forwardTo nodeSendToolResults)
                     .onCondition { _ -> !shouldCompress() }
             )
 
+            // After sending results, LLM may respond with text or call more tools
             edge(
-                (nodeSendToolResult forwardTo nodeFinish)
+                (nodeSendToolResults forwardTo nodeFinish)
                     .onAssistantMessage { true }
             )
             edge(
-                (nodeSendToolResult forwardTo nodeExecuteTool)
-                    .onToolCall { call -> captureTransition(call) }
+                (nodeSendToolResults forwardTo nodeExecuteTools)
+                    .onMultipleToolCalls { calls -> captureTransitions(calls) }
             )
         }
 
