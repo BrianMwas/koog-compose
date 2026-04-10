@@ -14,6 +14,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.session.KoogComposeContext
@@ -164,4 +165,10 @@ fun KoogSampleApp(
             )
         }
     }
+}
+
+@Preview(showBackground = true)
+@Composable
+private fun PreviewKoogSampleApp() {
+    KoogSampleApp()
 }
