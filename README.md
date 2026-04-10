@@ -623,33 +623,65 @@ It keeps the real `PhaseSession` tool/phase loop but swaps the live provider for
 scripted `FakePromptExecutor`, so you can prove transitions, tool calls, confirmation
 behavior, and shared-state mutation in unit tests without hitting a real model.
 
+#### Add the test dependency
+
 ```kotlin
-val session = testPhaseSession(context) {
-    on("I need help with my location", phase = "greeting") {
-        transitionTo("location_check")
-        callTool("RecordLocationIntent")
-        respondWith("Sure, fetching location now.")
-    }
-}
-
-session.send("I need help with my location")
-
-assertPhase(session, "location_check")
-assertToolCalled(session, "RecordLocationIntent")
-assertState(session) { state ->
-    assertEquals(Intent.LOCATION_REQUEST, state.intent)
+// In your module's build.gradle.kts
+dependencies {
+    testImplementation(kotlin("test"))
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(project(":koog-compose-testing"))
 }
 ```
 
-Use the simple form when a turn only needs text:
+#### Write your first test
+
+```kotlin
+import io.github.koogcompose.testing.testPhaseSession
+import io.github.koogcompose.testing.assertPhase
+import io.github.koogcompose.testing.assertToolCalled
+import io.github.koogcompose.testing.assertState
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class MyFeatureTest {
+
+    @Test
+    fun `location request transitions to location_check phase`() {
+        val session = testPhaseSession(context) {
+            on("I need help with my location", phase = "greeting") {
+                transitionTo("location_check")
+                callTool("RecordLocationIntent")
+                respondWith("Sure, fetching location now.")
+            }
+        }
+
+        session.send("I need help with my location")
+
+        assertPhase(session, "location_check")
+        assertToolCalled(session, "RecordLocationIntent")
+        assertState(session) { state ->
+            assertEquals(Intent.LOCATION_REQUEST, state.intent)
+        }
+    }
+}
+```
+
+#### Simple text-only turns
+
+When a turn doesn't involve tools or transitions:
 
 ```kotlin
 val session = testPhaseSession(context) {
     on("Hello") respondWith "Hi there."
 }
+
+session.send("Hello")
 ```
 
-You can also make confirmation behavior deterministic:
+#### Test denial flows
+
+Make confirmation behavior deterministic with `AutoDenyConfirmationHandler`:
 
 ```kotlin
 val session = testPhaseSession(
@@ -662,6 +694,105 @@ val session = testPhaseSession(
         respondWith("I could not access location.")
     }
 }
+
+session.send("Share my location")
+assertGuardrailDenied(session, "RecordLocationIntent")
+```
+
+#### Test structured output
+
+Verify that typed phase outputs parse correctly:
+
+```kotlin
+@Serializable
+data class ExtractedIntent(val name: String, val confidence: Double)
+
+@Test
+fun `extracts intent from user message`() {
+    val context = testContext {
+        phases {
+            phase("extract") {
+                instructions { "Extract the user's intent as JSON." }
+                typedOutput<ExtractedIntent>(
+                    validate = {
+                        if (it.confidence < 0.5)
+                            ValidationResult.Invalid("confidence too low")
+                        else ValidationResult.Valid
+                    }
+                )
+            }
+        }
+    }
+
+    val session = testPhaseSession(context) {
+        on("I want to check my balance") respondWith
+            """{"name": "check_balance", "confidence": 0.92}"""
+    }
+
+    session.send("I want to check my balance")
+    // Validation passes — no exception thrown
+}
+```
+
+#### Test audit logging and tool counts
+
+```kotlin
+@Test
+fun `audit log tracks approved and denied calls`() {
+    val session = testPhaseSession(context) {
+        on("Send money", phase = "root") {
+            callTool("SendMoney")
+            respondWith("Done.")
+        }
+    }
+
+    session.send("Send money")
+
+    assertEquals(1, session.auditLogger.approvedCount)
+    assertEquals(0, session.auditLogger.deniedCount)
+}
+```
+
+#### Available test assertions
+
+| Assertion | Purpose |
+|---|---|
+| `assertPhase(session, "phaseName")` | Verify the session is in the expected phase |
+| `assertToolCalled(session, "toolName")` | Verify a specific tool was called |
+| `assertGuardrailDenied(session, "toolName")` | Verify a tool call was denied by guardrails |
+| `assertState(session) { state -> ... }` | Assert against the typed app state |
+| `assertEventDispatched(session) { event -> ... }` | Verify a specific KoogEvent was fired |
+
+#### Run tests
+
+```bash
+# Run all desktop tests (fastest — no Android emulator needed)
+./gradlew :koog-compose-core:desktopTest
+
+# Run a single test class
+./gradlew :koog-compose-core:desktopTest \
+    --tests "io.github.koogcompose.phase.PhaseOutputTest"
+
+# Run tests matching a pattern
+./gradlew :koog-compose-core:desktopTest \
+    --tests "*AuditLoggerTest" \
+    --tests "*HandoffToolTest"
+
+# Run all project tests
+./gradlew test
+
+# Run Android instrumented tests (requires connected device/emulator)
+./gradlew :koog-compose-core:connectedAndroidTest
+```
+
+#### Test the sample app
+
+```bash
+# Build the sample app for Android
+./gradlew :sample-app:assembleDebug
+
+# Build for iOS Simulator
+./gradlew :sample-app:assembleDebugIosSim
 ```
 
 ### Stateless sessions
