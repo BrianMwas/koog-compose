@@ -592,6 +592,7 @@ public open class ChatSession(
             is ToolResult.Success -> auditLogger.logApproved(tool.name, args.toString(), userId)
             is ToolResult.Failure -> auditLogger.logFailed(tool.name, args.toString(), result.message, userId)
             is ToolResult.Denied -> auditLogger.logDenied(tool.name, args.toString(), result.reason, userId)
+            is ToolResult.Structured<*> -> auditLogger.logApproved(tool.name, args.toString(), userId)
         }
         return result
     }
@@ -733,6 +734,14 @@ private fun toolResultPayload(result: ToolResult): String = when (result) {
         buildJsonObject {
             put("status", "error")
             put("message", result.message)
+        },
+    )
+
+    is ToolResult.Structured<*> -> toolPayloadJson.encodeToString(
+        JsonObject.serializer(),
+        buildJsonObject {
+            put("status", "structured")
+            put("data", result.toJson())
         },
     )
 }

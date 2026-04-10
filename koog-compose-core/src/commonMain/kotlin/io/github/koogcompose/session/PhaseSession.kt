@@ -52,22 +52,18 @@ public class PhaseSession<S>(
     private val _activity = MutableStateFlow<AgentActivity>(AgentActivity.Idle)
     override val activity: StateFlow<AgentActivity> = _activity.asStateFlow()
 
-    private val _isRunningDerived = MutableStateFlow(false)
-
+    private val _isRunning = MutableStateFlow(false)
 
     private val _activityDetail = MutableStateFlow("")
     override val activityDetail: StateFlow<String> = _activityDetail.asStateFlow()
 
     // Derived from activity — backward-compatible with existing code that reads isRunning.
-    override val isRunning: StateFlow<Boolean> = MutableStateFlow(false).also { derived ->
+    override val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
+
+    init {
         scope.launch {
-            _activity.collect { derived.value = it.isRunning }
+            _activity.collect { _isRunning.value = it.isRunning }
         }
-    }.let {
-        // Return the underlying StateFlow via the activity map.
-        // We use a dedicated MutableStateFlow updated via collect to avoid
-        // needing stateIn (which requires a lifecycle scope we don't own).
-        _isRunningDerived
     }
 
 
@@ -91,6 +87,9 @@ public class PhaseSession<S>(
     private val _responseStream = MutableSharedFlow<String>(extraBufferCapacity = 64)
     override val responseStream: Flow<String> = _responseStream.asSharedFlow()
 
+    private val _toolCallCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    override val toolCallCounts: StateFlow<Map<String, Int>> = _toolCallCounts.asStateFlow()
+
     public val appState: StateFlow<S>? = context.stateStore?.stateFlow
 
     // ── Stuck detection tracking ───────────────────────────────────────────
@@ -100,13 +99,6 @@ public class PhaseSession<S>(
     // ── Agent lifecycle ────────────────────────────────────────────────────
 
     private var agent: AIAgent<String, String>? = null
-
-    init {
-        // Keep _isRunningDerived in sync with _activity.
-        scope.launch {
-            _activity.collect { _isRunningDerived.value = it.isRunning }
-        }
-    }
 
     // ── Public API ─────────────────────────────────────────────────────────
 
@@ -221,6 +213,7 @@ public class PhaseSession<S>(
             _lastResponse.value = null
             _error.value = null
             _turnId.value = 0
+            _toolCallCounts.value = emptyMap()
             _activity.value = AgentActivity.Idle
             _activityDetail.value = ""
             lastPhaseInput = null
@@ -289,6 +282,10 @@ public class PhaseSession<S>(
             }
             is KoogEvent.ToolExecutionCompleted -> {
                 // Tool done — back to Thinking for the next LLM pass.
+                // Track tool call count for analytics and loop detection.
+                _toolCallCounts.value = _toolCallCounts.value.toMutableMap().apply {
+                    this[event.toolName] = (this[event.toolName] ?: 0) + 1
+                }
                 if (_activity.value is AgentActivity.Executing
                     || _activity.value is AgentActivity.WaitingForInput) {
                     _activity.value = AgentActivity.Thinking

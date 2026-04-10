@@ -6,6 +6,8 @@ import androidx.room.*
 public data class SessionEntity(
     @PrimaryKey val sessionId: String,
     val currentPhaseName: String,
+    val serializedState: String? = null,
+    val toolCallCountsJson: String? = null,
     val createdAt: Long,
     val updatedAt: Long
 )

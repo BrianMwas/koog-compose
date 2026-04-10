@@ -3,6 +3,7 @@ package io.github.koogcompose.provider
 import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolResult
+import io.github.koogcompose.tool.toKoogToolDescriptor
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue

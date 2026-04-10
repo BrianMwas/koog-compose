@@ -9,7 +9,9 @@ import io.github.koogcompose.event.KoogEventBus
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlin.time.Clock
 
 /**
  * Bridges WorkManager's [WorkInfo] lifecycle to [KoogEventBus].
@@ -17,6 +19,9 @@ import kotlinx.coroutines.launch
  * Attach one observer per job after calling [BackgroundJobProvider.enqueue].
  * The observer removes itself automatically once the job reaches a terminal
  * state (SUCCEEDED, FAILED, CANCELLED) so there are no leaks.
+ *
+ * The internal [CoroutineScope] is cancelled on [detach] or when the job
+ * reaches a terminal state — preventing scope leaks.
  *
  * @param context   Application context for WorkManager access.
  * @param jobId     Must match the unique work name used in [WorkManagerJobProvider.enqueue].
@@ -46,11 +51,9 @@ public class WorkManagerObserver(
             val status = info.state.toStatusString()
 
             scope.launch {
-                // Using internal dispatch since it's within the same package/module scope
-                // or we need to ensure the bus allows external dispatch for background jobs.
                 eventBus.dispatch(
                     KoogEvent.BackgroundJobStatus(
-                        timestampMs = System.currentTimeMillis(),
+                        timestampMs = Clock.System.now().toEpochMilliseconds(),
                         phaseName = null,
                         jobId = jobId,
                         status = status
@@ -61,18 +64,21 @@ public class WorkManagerObserver(
             if (info.state.isFinished) {
                 liveData.removeObserver(observer!!)
                 observer = null
+                scope.cancel()
             }
         }.also { liveData.observeForever(it) }
     }
 
-    /** Stops observing immediately, regardless of job state. */
+    /**
+     * Stops observing immediately and cancels the internal scope.
+     * Call this when the owning component is destroyed to prevent leaks.
+     */
     public fun detach() {
         observer?.let {
-            workManager
-                .getWorkInfosForUniqueWorkLiveData(jobId)
-                .removeObserver(it)
+            workManager.getWorkInfosForUniqueWorkLiveData(jobId).removeObserver(it)
             observer = null
         }
+        scope.cancel()
     }
 
     private fun WorkInfo.State.toStatusString(): String = when (this) {

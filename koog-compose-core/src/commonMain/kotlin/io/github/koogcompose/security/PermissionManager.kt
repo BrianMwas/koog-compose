@@ -158,6 +158,7 @@ public class PermissionManager(
             is ToolResult.Success -> auditLogger.logApproved(toolName, args.toString(), userId)
             is ToolResult.Failure -> auditLogger.logFailed(toolName, args.toString(), result.message, userId)
             is ToolResult.Denied -> auditLogger.logDenied(toolName, args.toString(), result.reason, userId)
+            is ToolResult.Structured<*> -> auditLogger.logApproved(toolName, args.toString(), userId)
         }
         return result
     }

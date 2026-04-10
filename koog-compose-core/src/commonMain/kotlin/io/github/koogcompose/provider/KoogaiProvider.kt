@@ -1,13 +1,11 @@
 package io.github.koogcompose.provider
 
-import ai.koog.agents.core.tools.Tool
 import ai.koog.agents.core.tools.ToolDescriptor
-import ai.koog.agents.core.tools.ToolParameterDescriptor
-import ai.koog.agents.core.tools.ToolParameterType
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.prompt.cache.memory.InMemoryPromptCache
 import ai.koog.prompt.dsl.Prompt
 import ai.koog.prompt.dsl.prompt
+import ai.koog.prompt.dsl.ModerationResult
 import ai.koog.prompt.executor.cached.CachedPromptExecutor
 import ai.koog.prompt.executor.clients.LLMClient
 import ai.koog.prompt.executor.clients.anthropic.AnthropicClientSettings
@@ -33,27 +31,23 @@ import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.message.ResponseMetaInfo
 import ai.koog.prompt.params.LLMParams
 import ai.koog.prompt.streaming.StreamFrame
-import ai.koog.serialization.KSerializerTypeToken
-import ai.koog.serialization.annotations.InternalKoogSerializationApi
 import io.github.koogcompose.security.AuditLogger
 import io.github.koogcompose.security.GuardedTool
 import io.github.koogcompose.security.GuardrailEnforcer
 import io.github.koogcompose.session.AIResponseChunk
 import io.github.koogcompose.session.Attachment
-
 import io.github.koogcompose.session.ChatMessage
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.MessageRole
 import io.github.koogcompose.session.ToolMessageKind
 import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolResult
+import io.github.koogcompose.tool.toKoogTool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
-import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -266,145 +260,6 @@ internal fun buildKoogToolRegistry(tools: List<SecureTool>): ToolRegistry {
     return ToolRegistry {
         tools.forEach { tool ->
             tool(tool.toKoogTool())
-        }
-    }
-}
-
-@OptIn(InternalKoogSerializationApi::class)
-internal fun SecureTool.toKoogTool(): Tool<JsonObject, String> {
-    val descriptor = toKoogToolDescriptor()
-    return object : Tool<JsonObject, String>(
-        argsType = KSerializerTypeToken(JsonObject.serializer()),
-        resultType = KSerializerTypeToken(String.serializer()),
-        descriptor = descriptor
-    ) {
-        override suspend fun execute(args: JsonObject): String {
-            return when (val result = this@toKoogTool.execute(args)) {
-                is ToolResult.Success -> result.output
-                is ToolResult.Denied -> "Denied: ${result.reason}"
-                is ToolResult.Failure -> "Error: ${result.message}"
-            }
-        }
-    }
-}
-
-internal fun SecureTool.toKoogToolDescriptor(): ToolDescriptor {
-    val schema = parametersSchema
-        ?: return ToolDescriptor(
-            name = name,
-            description = description,
-            requiredParameters = emptyList(),
-            optionalParameters = emptyList()
-        )
-
-    val rootProperties = schema.rootProperties()
-    val requiredNames = schema.rootRequiredNames()
-    val descriptors = rootProperties.map { (propertyName, propertySchema) ->
-        propertyName.toToolParameterDescriptor(propertySchema)
-    }
-
-    return ToolDescriptor(
-        name = name,
-        description = description,
-        requiredParameters = descriptors.filter { it.name in requiredNames },
-        optionalParameters = descriptors.filter { it.name !in requiredNames }
-    )
-}
-
-private fun JsonObject.rootProperties(): JsonObject {
-    if (get("type")?.jsonPrimitive?.contentOrNull == "object") {
-        return get("properties")?.jsonObject ?: buildJsonObject { }
-    }
-    return this
-}
-
-private fun JsonObject.rootRequiredNames(): Set<String> {
-    if (get("type")?.jsonPrimitive?.contentOrNull == "object") {
-        return get("required")
-            ?.jsonArray
-            ?.mapNotNull { it.jsonPrimitive.contentOrNull }
-            ?.toSet()
-            ?: emptySet()
-    }
-
-    return entries
-        .filter { (_, schema) ->
-            schema.jsonObject["required"]?.jsonPrimitive?.booleanOrNull ?: true
-        }
-        .map { it.key }
-        .toSet()
-}
-
-private fun String.toToolParameterDescriptor(schema: JsonElement): ToolParameterDescriptor {
-    val descriptorSchema = schema.jsonObject
-    return ToolParameterDescriptor(
-        name = this,
-        description = descriptorSchema["description"]?.jsonPrimitive?.contentOrNull ?: this,
-        type = descriptorSchema.toToolParameterType(this)
-    )
-}
-
-private fun JsonObject.toToolParameterType(fallbackName: String): ToolParameterType {
-    val enumEntries = get("enum")
-        ?.jsonArray
-        ?.mapNotNull { it.jsonPrimitive.contentOrNull }
-        ?.toTypedArray()
-    if (!enumEntries.isNullOrEmpty()) {
-        return ToolParameterType.Enum(enumEntries)
-    }
-
-    return when (get("type")?.jsonPrimitive?.contentOrNull?.lowercase()) {
-        "string" -> ToolParameterType.String
-        "integer", "int" -> ToolParameterType.Integer
-        "number", "float", "double" -> ToolParameterType.Float
-        "boolean", "bool" -> ToolParameterType.Boolean
-        "array" -> ToolParameterType.List(
-            get("items")
-                ?.jsonObject
-                ?.toToolParameterType("${fallbackName}_item")
-                ?: ToolParameterType.String
-        )
-
-        "object" -> ToolParameterType.Object(
-            properties = get("properties")
-                ?.jsonObject
-                ?.map { (name, schema) -> name.toToolParameterDescriptor(schema) }
-                ?: emptyList(),
-            requiredProperties = get("required")
-                ?.jsonArray
-                ?.mapNotNull { it.jsonPrimitive.contentOrNull }
-                ?: emptyList(),
-            additionalProperties = get("additionalProperties")?.let { additional ->
-                when (additional) {
-                    is JsonPrimitive -> additional.booleanOrNull
-                    else -> true
-                }
-            },
-            additionalPropertiesType = get("additionalProperties")
-                ?.let { additional ->
-                    if (additional is JsonObject) {
-                        additional.toToolParameterType("${fallbackName}_additional")
-                    } else {
-                        null
-                    }
-                }
-        )
-
-        "enum" -> ToolParameterType.Enum(emptyArray())
-        "null" -> ToolParameterType.Null
-        else -> when {
-            containsKey("properties") -> ToolParameterType.Object(
-                properties = get("properties")
-                    ?.jsonObject
-                    ?.map { (name, schema) -> name.toToolParameterDescriptor(schema) }
-                    ?: emptyList(),
-                requiredProperties = get("required")
-                    ?.jsonArray
-                    ?.mapNotNull { it.jsonPrimitive.contentOrNull }
-                    ?: emptyList()
-            )
-
-            else -> ToolParameterType.String
         }
     }
 }

@@ -1,11 +1,15 @@
 package io.github.koogcompose.session
 
 import ai.koog.agents.core.agent.AIAgent
+import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.model.PromptExecutor
 import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
+import io.github.koogcompose.phase.StructuredPhaseExecutor
+import io.github.koogcompose.phase.phaseOutput
 import io.github.koogcompose.provider.buildExecutor
+import io.github.koogcompose.provider.resolveModel
 import io.github.koogcompose.tool.HandoffTool
 import io.github.koogcompose.tool.HandoffContext
 import io.github.koogcompose.tool.handoffToolName
@@ -19,7 +23,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlin.time.Clock
 
 /**
  * Multi-agent runtime for a [KoogSession].
@@ -71,6 +74,9 @@ public class SessionRunner<S>(
 
     private val _error = MutableStateFlow<Throwable?>(null)
     override val error: StateFlow<Throwable?> = _error.asStateFlow()
+
+    private val _toolCallCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
+    override val toolCallCounts: StateFlow<Map<String, Int>> = _toolCallCounts.asStateFlow()
 
     private val _responseStream = MutableSharedFlow<String>(extraBufferCapacity = 64)
     override val responseStream: Flow<String> = _responseStream.asSharedFlow()
@@ -151,6 +157,7 @@ public class SessionRunner<S>(
             _lastResponse.value = null
             _error.value = null
             _turnId.value = 0
+            _toolCallCounts.value = emptyMap()
             _activity.value = AgentActivity.Idle
             _activityDetail.value = ""
         }
@@ -215,6 +222,48 @@ public class SessionRunner<S>(
         if (toolName.startsWith("handoff_to_")) {
             pendingHandoffTarget = toolName.removePrefix("handoff_to_")
         }
+        // Increment tool call count for analytics and loop detection.
+        _toolCallCounts.value = _toolCallCounts.value.toMutableMap().apply {
+            this[toolName] = (this[toolName] ?: 0) + 1
+        }
+    }
+
+    /**
+     * One-shot structured extraction outside of any phase.
+     *
+     * ```kotlin
+     * val sentiment = runner.extract<SentimentResult>(
+     *     input = "I love this app but onboarding is confusing",
+     *     instructions = "Extract sentiment as JSON."
+     * )
+     * ```
+     */
+    private suspend inline fun <reified T> extract(
+        input: String,
+        instructions: String,
+        retries: Int = session.config.retryPolicy.structureFixingRetries,
+        version: Int = 1,
+        examples: List<T> = emptyList(),
+        noinline validate: (T) -> io.github.koogcompose.phase.ValidationResult =
+            { io.github.koogcompose.phase.ValidationResult.Valid },
+    ): T {
+        val context  = session.contextFor(session.mainAgent)
+        val model    = resolveModel(context.providerConfig)
+        val executor = buildExecutor(context.providerConfig)
+        val output   = phaseOutput<T>(
+            retries = retries,
+            version = version,
+            examples = examples,
+            validate = validate,
+        )
+
+        val extractPrompt = prompt("koog-compose-extract") {
+            if (instructions.isNotBlank()) system(instructions)
+            user { +input }
+        }
+
+        return StructuredPhaseExecutor(executor, output, model)
+            .executeStructured(extractPrompt)
     }
 
     private suspend fun handleActivityEvent(event: KoogEvent) {

@@ -82,4 +82,16 @@ public interface KoogSessionHandle {
      * configuration. The next [send] starts a fresh conversation.
      */
     public fun reset()
+
+    /**
+     * Tool call frequency for the current session.
+     *
+     * Maps each tool name to the number of times it has been called
+     * in this session. Useful for analytics, usage quotas, and
+     * detecting tool call loops.
+     *
+     * Updated after each [KoogEvent.ToolExecutionCompleted].
+     */
+    public val toolCallCounts: StateFlow<Map<String, Int>>
+        get() = kotlinx.coroutines.flow.MutableStateFlow(emptyMap()) // no-op default
 }

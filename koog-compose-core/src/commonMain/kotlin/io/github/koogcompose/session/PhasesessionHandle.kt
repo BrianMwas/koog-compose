@@ -43,6 +43,9 @@ public class PhaseSessionHandle<S>(
 
     override fun reset(): Unit = delegate.reset()
 
+    override val toolCallCounts: StateFlow<Map<String, Int>>
+        get() = delegate.toolCallCounts
+
     public val appState: StateFlow<S>?
         get() = delegate.appState
 
@@ -116,6 +119,9 @@ public class SessionRunnerHandle<S>(
     override fun send(userMessage: String): Unit = delegate.send(userMessage)
 
     override fun reset(): Unit = delegate.reset()
+
+    override val toolCallCounts: StateFlow<Map<String, Int>>
+        get() = delegate.toolCallCounts
 
     public val activeAgentName: StateFlow<String>
         get() = delegate.activeAgentName

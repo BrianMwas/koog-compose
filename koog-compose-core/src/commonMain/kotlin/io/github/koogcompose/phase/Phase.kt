@@ -39,7 +39,10 @@ public data class Phase(
     val resolvedInstructions: String = instructions,
     val toolRegistry: ToolRegistry,
     val transitions: List<PhaseTransition> = emptyList(),
-    val isInitial: Boolean = false
+    val isInitial: Boolean = false,
+
+
+    val outputStructure: PhaseOutput<*>? = null,
 )
 
 /**
@@ -145,58 +148,59 @@ public class PhaseRegistry private constructor(
 
 public class PhaseBuilder(
     private val name: String,
-    private val isInitial: Boolean = false
+    private val isInitial: Boolean = false,
 ) {
-    // Raw instructions — [ToolName] refs resolved later against global registry
     private var instructions: String = ""
     private val toolRegistryBuilder = ToolRegistry.Builder()
     private val transitions = mutableListOf<PhaseTransition>()
+    public var outputStructure: PhaseOutput<*>? = null   // NEW
 
-    /**
-     * Sets the phase instructions. Supports [ToolName] references.
-     *
-     * ```kotlin
-     * instructions {
-     *     """
-     *     Help the user check their balance.
-     *     Use [GetBalance] to fetch the current amount.
-     *     Use [GetTransactions] to show recent activity.
-     *     """.trimIndent()
-     * }
-     * ```
-     *
-     * [GetBalance] will be resolved to the tool's full schema when the agent
-     * is built, provided GetBalance is registered in the global tools { } block.
-     */
-    public fun instructions(block: () -> String) {
-        instructions = block()
-    }
-
-    public fun tools(block: ToolRegistry.Builder.() -> Unit) {
-        toolRegistryBuilder.apply(block)
-    }
-
-    public fun tool(tool: SecureTool) {
-        toolRegistryBuilder.register(tool)
-    }
-
-    /**
-     * Declares a condition under which the LLM should transition to [targetPhase].
-     * Exposed to the LLM as a tool call — the LLM decides when the condition is met.
-     *
-     * @param on Natural language description of when to transition (seen by LLM).
-     * @param targetPhase The name of the phase to move to.
-     */
+    public fun instructions(block: () -> String) { instructions = block() }
+    public fun tools(block: ToolRegistry.Builder.() -> Unit) { toolRegistryBuilder.apply(block) }
+    public fun tool(tool: SecureTool) { toolRegistryBuilder.register(tool) }
     public fun onCondition(on: String, targetPhase: String) {
         transitions.add(PhaseTransition(targetPhase, on))
     }
 
+    /**
+
+     * Declares that this phase must return a value of type [O].
+     *
+     * Annotate your data class with @LLMDescription on each field —
+     * the schema is generated automatically from those annotations.
+     *
+     * @param retries  parse-retry attempts before surfacing an error
+     * @param version  schema version for evolving output types
+     * @param examples injected into the prompt regardless of provider
+     *                 type, fixing Koog's native-schema priming bug
+     * @param validate optional validation lambda — return [ValidationResult.Invalid]
+     *                 to trigger a retry with the error fed back to the LLM
+     */
+    public inline fun <reified O> typedOutput(
+        retries: Int = 3,
+        version: Int = 1,
+        examples: List<O> = emptyList(),
+        descriptionOverrides: Map<String, String> = emptyMap(),
+        excludedProperties: Set<String> = emptySet(),
+        noinline validate: (O) -> ValidationResult = { ValidationResult.Valid },
+    ) {
+        outputStructure = phaseOutput<O>(
+            retries = retries,
+            version = version,
+            examples = examples,
+            descriptionOverrides = descriptionOverrides,
+            excludedProperties = excludedProperties,
+            validate = validate,
+        )
+    }
+
     public fun build(): Phase = Phase(
-        name = name,
-        instructions = instructions,
-        resolvedInstructions = instructions, // resolved later by PhaseRegistry.resolveToolRefs()
-        toolRegistry = toolRegistryBuilder.build(),
-        transitions = transitions.toList(),
-        isInitial = isInitial
+        name                 = name,
+        instructions         = instructions,
+        resolvedInstructions = instructions,
+        toolRegistry         = toolRegistryBuilder.build(),
+        transitions          = transitions.toList(),
+        isInitial            = isInitial,
+        outputStructure      = outputStructure,
     )
 }
