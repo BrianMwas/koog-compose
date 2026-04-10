@@ -254,13 +254,14 @@ val session = PhaseSession(
 
 ## How it works
 
-koog-compose is built as a thin, opinionated layer over [JetBrains Koog](https://github.com/JetBrains/koog). Every `koogCompose { }` block produces a live `AIAgent` with three Koog features installed:
+koog-compose is built as a thin, opinionated layer over [JetBrains Koog](https://github.com/JetBrains/koog). Every `koogCompose { }` block produces a live `AIAgent` with features installed:
 
 | Feature | Purpose |
 |---|---|
 | **ChatMemory** | Owns LLM conversation history. Loads from your `SessionStore` before each turn, saves after. Replaces manual `messageHistory` lists. |
 | **StreamingFeature** | Intercepts `TextDelta` frames from Koog's LLM pipeline and emits them as `Flow<String>` for real-time UI updates. |
 | **EventHandler** | Maps Koog's native lifecycle callbacks (`onToolCallStarting`, `onAgentCompleted`, etc.) into koog-compose's typed `KoogEvent` sealed hierarchy. |
+| **Persistence** (opt-in) | Captures complete agent state (history, current node, input data, timestamps) at each execution point. Supports rollback. Disabled by default — pass `persistenceStorage` to enable. |
 
 Phase subgraphs are built from your `phases { }` DSL into Koog's `AIAgentGraphStrategy`. Each phase becomes a subgraph with `nodeLLMRequest` → `nodeExecuteTool` → `nodeLLMSendToolResult` nodes, with optional `nodeLLMCompressHistory` between them. Phase transitions are captured as edges — the LLM triggers them by calling generated transition tools.
 
@@ -525,6 +526,53 @@ println("get_balance called: ${counts["get_balance"] ?: 0} times")
 
 Counts persist in `AgentSession` and reset on `session.reset()`.
 
+### Privacy & data ownership
+
+koog-compose is designed so that **all data stays on the user's device by default**. Nothing is transmitted to external servers unless you explicitly wire it up.
+
+**What gets stored and where:**
+
+| Data | Where it goes | User control |
+|---|---|---|
+| **Conversation history** | `SessionStore` — user picks `InMemory`, `Room`, `Redis`, or custom | Full ownership. Can `delete(sessionId)` or `reset()` anytime |
+| **Tool audit log** | In-memory `SharedFlow` only — never leaves device unless you subscribe and forward externally | `AuditLogger(redactArgs = true)` replaces raw args with `[REDACTED]` for PII-sensitive apps |
+| **Tool call counts** | In-memory `StateFlow` — per-session only | Resets on `reset()`. Not persisted to disk |
+| **Agent checkpoints (persistence)** | File-based, on user's device | **Opt-in** — disabled by default. Pass `persistenceStorage` to enable |
+| **Events** | Dispatched via `EventHandlers` — you decide what to wire | You own the handler registration |
+
+**What koog-compose does NOT do:**
+
+- ❌ No network telemetry
+- ❌ No analytics sent to external servers
+- ❌ No prompts, responses, or tool args transmitted
+- ❌ No crash reporting
+
+**Audit log redaction for PII:**
+
+If your app handles sensitive data (phone numbers, addresses, auth tokens), enable args redaction:
+
+```kotlin
+val auditLogger = AuditLogger(redactArgs = true)
+```
+
+Tool names, outcomes, and timestamps are still logged so production monitoring works — just not the raw arguments. `AuditEntry.isRedacted` lets consumers detect redacted entries.
+
+### Persistence (opt-in)
+
+Agent checkpoints capture the complete state — message history, current graph node, input data, and timestamps — at each execution point. This is **disabled by default**. Enable it by passing a `FilePersistenceStorageProvider`:
+
+```kotlin
+val agent = PhaseAwareAgent.create(
+    context = ctx,
+    promptExecutor = executor,
+    sessionId = "session-1",
+    store = InMemorySessionStore(),
+    persistenceStorage = myFilePersistenceProvider,  // opt-in
+)
+```
+
+When enabled, all checkpoint data stays on the user's device. Nothing is transmitted externally. To disable persistence entirely, simply omit `persistenceStorage`.
+
 ### Session store
 
 Implement `SessionStore` to plug in any persistence backend:
@@ -642,10 +690,12 @@ val context = koogCompose {
 | Structured outputs | ✅ | ✅ | ✅ |
 | Multi-agent handoff | ✅ | ✅ | ✅ |
 | Tool call tracking | ✅ | ✅ | ✅ |
+| Audit log redaction | ✅ | ✅ | ✅ |
+| Agent checkpoints (opt-in) | ✅ | ✅ | ✅ |
 | Compose UI | ✅ | ✅ | ✅ |
 | Room session store | ✅ | ✅ | — |
 | Device tools (location) | ✅ | 🔜 v0.4 | — |
-| WorkManager proactive agents | ✅ | — | — |
+| WorkManager background | ✅ | — | — |
 
 ---
 
@@ -676,15 +726,21 @@ val context = koogCompose {
 - ✅ Tool call frequency tracking per session
 - ✅ Multi-agent handoff via `handoff(agentRef)`
 - ✅ `[ToolName]` reference resolution in phase instructions
+- ✅ Rich JSON Schema tool parameter types (String, Integer, Boolean, Enum, Array, Object)
+- ✅ Privacy & data ownership — all data stays on device by default
+- ✅ Audit log args redaction for PII-sensitive apps
+- ✅ Agent checkpoints (opt-in via `Persistence` feature)
+- ✅ Background task tools via WorkManager (Android)
+- ✅ RoomSessionStore persists `serializedState` and `toolCallCounts`
+- ✅ `KoogRoutine` registers phase tools and transitions
 
 ### v0.4
 - **iOS device parity** — `CLLocation` and `PHPicker` tool support
 - **ActivityResult integration** — camera, file picker, permissions as agent tools
-- **WorkManager proactive agents** — background context gathering on Android
 - **Structured observability** — pluggable `EventSink` for Firebase, Datadog, custom backends
+- **Custom PersistenceStorageProvider** — SQLite, Keychain, cloud sync
 
 ### v0.5
-- **Backend telemetry sinks** — Firebase, remote tracing exporters
 - **Screenshot context tool** — give the agent a view of the current screen
 - **Voice slot** — LiveKit-compatible audio input/output in the UI module
 - **Schema migration utilities** — migrate persisted structured outputs across versions
