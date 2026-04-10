@@ -19,8 +19,7 @@ jobs:
     name: Test / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
-      fail-fast: true                   # abort sibling runners on first failure
-false                  # Changed to false so macos tests still run if ubuntu fails
+      fail-fast: false                  # let macos tests still run if ubuntu fails
       matrix:
         os: [ubuntu-latest, macos-latest]
 
