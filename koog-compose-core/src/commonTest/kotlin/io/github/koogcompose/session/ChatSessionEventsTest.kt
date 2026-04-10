@@ -132,10 +132,11 @@ class ChatSessionEventsTest {
     }
 }
 
-private fun eventContext(onEvent: (suspend (KoogEvent) -> Unit)? = null): KoogComposeContext<Unit> = koogCompose {
-    provider {
-        ollama(model = "demo-local")
-    }
+private fun eventContext(onEvent: (suspend (KoogEvent) -> Unit)? = null): KoogComposeContext<Unit> =
+    koogCompose<Unit> {
+        provider {
+            ollama(model = "demo-local")
+        }
     prompt {
         default { "You are a test assistant." }
     }

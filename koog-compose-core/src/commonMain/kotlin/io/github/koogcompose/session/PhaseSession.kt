@@ -88,7 +88,7 @@ public class PhaseSession<S>(
     override val responseStream: Flow<String> = _responseStream.asSharedFlow()
 
     private val _toolCallCounts = MutableStateFlow<Map<String, Int>>(emptyMap())
-    public val toolCallCounts: StateFlow<Map<String, Int>> = _toolCallCounts.asStateFlow()
+    override val toolCallCounts: StateFlow<Map<String, Int>> = _toolCallCounts.asStateFlow()
 
     public val appState: StateFlow<S>? = context.stateStore?.stateFlow
 

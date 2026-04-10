@@ -6,6 +6,7 @@ import ai.koog.agents.core.tools.ToolParameterDescriptor
 import ai.koog.agents.core.tools.ToolParameterType
 import ai.koog.serialization.KSerializerTypeToken
 import ai.koog.serialization.annotations.InternalKoogSerializationApi
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -45,7 +46,7 @@ internal fun SecureTool.toKoogTool(): Tool<JsonObject, String> {
 }
 
 @OptIn(InternalKoogSerializationApi::class)
-private fun SecureTool.toKoogToolDescriptor(): ToolDescriptor {
+internal fun SecureTool.toKoogToolDescriptor(): ToolDescriptor {
     val schema = parametersSchema
     if (schema != null) {
         val rootProperties = schema.rootProperties()

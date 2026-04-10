@@ -245,7 +245,7 @@ class ChatSessionToolLoopTest {
     }
 }
 
-private fun toolContext(tool: SecureTool): KoogComposeContext<Unit> = koogCompose {
+private fun toolContext(tool: SecureTool): KoogComposeContext<Unit> = koogCompose<Unit> {
     provider {
         ollama(model = "demo-local")
     }
@@ -260,7 +260,7 @@ private fun toolContext(tool: SecureTool): KoogComposeContext<Unit> = koogCompos
     }
 }
 
-private fun phaseContext(checkoutTool: SecureTool): KoogComposeContext<Unit> = koogCompose {
+private fun phaseContext(checkoutTool: SecureTool): KoogComposeContext<Unit> = koogCompose<Unit> {
     provider {
         ollama(model = "demo-local")
     }

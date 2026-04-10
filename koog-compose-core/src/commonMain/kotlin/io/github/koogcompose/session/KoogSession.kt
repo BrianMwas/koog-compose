@@ -111,10 +111,12 @@ public data class KoogSessionConfig(
 
 // ── DSL entry point ───────────────────────────────────────────────────────────
 
+@JvmName("koogSessionTyped")
 public fun <S> koogSession(
     block: KoogSessionBuilder<S>.() -> Unit,
 ): KoogSession<S> = KoogSessionBuilder<S>().apply(block).build()
 
+@JvmName("koogSessionUnit")
 public fun koogSession(
     block: KoogSessionBuilder<Unit>.() -> Unit,
 ): KoogSession<Unit> = KoogSessionBuilder<Unit>().apply(block).build()
