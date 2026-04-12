@@ -24,6 +24,8 @@ import io.github.koogcompose.ui.confirmation.ConfirmationObserver
 import io.github.koogcompose.ui.confirmation.rememberDialogConfirmationHandler
 import io.github.koogcompose.ui.events.EventObserver
 import io.github.koogcompose.ui.state.rememberChatState
+import io.github.koogcompose.session.Attachment
+import java.io.File
 
 /**
  * Shared Compose UI for the sample app.
@@ -135,7 +137,15 @@ fun KoogSampleApp(
             bottomBar = {
                 ChatInputBar(
                     chatState = chatState,
-                    placeholder = "Ask me anything..."
+                    placeholder = "Ask me anything...",
+                    trailingActions = {
+                        HoldToRecordButton(
+                            onVoiceFile = { audio ->
+                                chatState.addAttachment(audio)
+                                chatState.send()
+                            }
+                        )
+                    }
                 )
             }
         ) { innerPadding ->

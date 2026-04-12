@@ -24,11 +24,13 @@ kotlin {
             implementation(libs.material3.v190)
             implementation(libs.compose.ui)
             implementation(libs.compose.uiToolingPreview)
+            implementation(compose.materialIconsExtended)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
         }
         androidMain.dependencies {
             implementation(project(":koog-compose-ui"))
+            implementation(project(":koog-compose-mediapipe"))
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.core.ktx)
         }
@@ -45,6 +47,7 @@ android {
         targetSdk = libs.versions.android.targetSdk.get().toInt()
         versionCode = 1
         versionName = "0.1.0"
+        multiDexEnabled = true
     }
 
     buildTypes {

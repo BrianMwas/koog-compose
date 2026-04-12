@@ -62,6 +62,33 @@ public sealed class ProviderConfig {
     ) : ProviderConfig()
 
     /**
+     * LiteRT-LM — on-device Gemma inference via Google's LiteRT-LM engine.
+     * No API key, no network. Runs quantized Gemma models directly on the device.
+     *
+     * Requires the `:koog-compose-mediapipe` module and a `.litertlm` model file
+     * (downloaded from HuggingFace LiteRT Community).
+     *
+     * ```kotlin
+     * provider {
+     *     litertlm(
+     *         modelPath = "/path/to/gemma3-1b-it.litertlm",
+     *         maxTokens = 1024,
+     *         temperature = 0.7,
+     *     )
+     * }
+     * ```
+     *
+     * @param modelPath Absolute path to the `.litertlm` model file.
+     * @param maxTokens Maximum tokens per generation.
+     * @param temperature Sampling temperature (0.0–1.0).
+     */
+    public data class LiteRtLm(
+        val modelPath: String = "gemma3-1b-it.litertlm",
+        val maxTokens: Int? = null,
+        val temperature: Double? = null,
+    ) : ProviderConfig()
+
+    /**
      * Router — distributes requests across multiple providers.
      * Backed by Koog's built-in LLMClientRouter.
      *
@@ -118,6 +145,13 @@ public class ProviderConfigBuilder {
         config = OllamaBuilder(model).apply(block).build()
     }
 
+    public fun litertlm(
+        modelPath: String = "gemma3-1b-it.litertlm",
+        block: LiteRtLmBuilder.() -> Unit = {}
+    ) {
+        config = LiteRtLmBuilder(modelPath).apply(block).build()
+    }
+
     public fun router(
         strategy: RouterStrategy = RouterStrategy.RoundRobin,
         block: RouterBuilder.() -> Unit
@@ -158,6 +192,12 @@ public class OllamaBuilder(private val model: String) {
     public fun build(): ProviderConfig = ProviderConfig.Ollama(model, baseUrl, maxTokens, temperature)
 }
 
+public class LiteRtLmBuilder(private val modelPath: String) {
+    public var maxTokens: Int? = null
+    public var temperature: Double? = null
+    public fun build(): ProviderConfig = ProviderConfig.LiteRtLm(modelPath, maxTokens, temperature)
+}
+
 public class RouterBuilder(private val strategy: RouterStrategy) {
     private val providers = mutableListOf<ProviderConfig>()
 
@@ -175,6 +215,13 @@ public class RouterBuilder(private val strategy: RouterStrategy) {
 
     public fun ollama(model: String, block: OllamaBuilder.() -> Unit = {}): Unit {
         providers.add(OllamaBuilder(model).apply(block).build())
+    }
+
+    public fun litertlm(
+        modelPath: String = "gemma3-1b-it.litertlm",
+        block: LiteRtLmBuilder.() -> Unit = {}
+    ): Unit {
+        providers.add(LiteRtLmBuilder(modelPath).apply(block).build())
     }
 
     public fun build(): ProviderConfig = ProviderConfig.Router(providers.toList(), strategy)

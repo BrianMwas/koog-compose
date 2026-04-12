@@ -41,6 +41,7 @@ include(":koog-compose-ui")
 include(":koog-compose-device")
 include(":koog-compose-testing")
 include(":koog-compose-session-room")
+include(":koog-compose-mediapipe")
 
 // Background task batteries (platform-specific implementations live in koog-compose-device)
 // Android: WorkManager (via androidx.work in koog-compose-device:androidMain)

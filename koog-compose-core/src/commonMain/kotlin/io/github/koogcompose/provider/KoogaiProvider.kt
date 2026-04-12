@@ -221,6 +221,10 @@ internal fun buildClientForProvider(config: ProviderConfig): LLMClient = when (c
     )
 
     is ProviderConfig.Ollama -> OllamaClient(config.baseUrl)
+    is ProviderConfig.LiteRtLm -> error(
+        "koog-compose: LiteRT-LM requires :koog-compose-mediapipe module. " +
+            "Use LiteRtLmProvider directly instead of KoogAIProvider."
+    )
     is ProviderConfig.Router -> error("Nested routers are not supported")
 }
 
@@ -248,6 +252,15 @@ internal fun resolveModel(config: ProviderConfig): LLModel = when (config) {
             LLMCapability.Temperature,
             LLMCapability.Tools,
             LLMCapability.Schema.JSON.Basic
+        )
+    )
+
+    is ProviderConfig.LiteRtLm -> LLModel(
+        provider = LLMProvider.Ollama, // reuse Ollama provider type as placeholder
+        id = "litertlm-gemma3",
+        capabilities = listOf(
+            LLMCapability.Completion,
+            LLMCapability.Tools,
         )
     )
 
@@ -367,6 +380,7 @@ private fun ProviderConfig.defaultTemperature(): Double? = when (this) {
     is ProviderConfig.Google -> temperature
     is ProviderConfig.Ollama -> temperature
     is ProviderConfig.OpenAI -> temperature
+    is ProviderConfig.LiteRtLm -> null
     is ProviderConfig.Router -> providers.firstOrNull()?.defaultTemperature()
 }
 
@@ -375,6 +389,7 @@ private fun ProviderConfig.defaultMaxTokens(): Int? = when (this) {
     is ProviderConfig.Google -> maxTokens
     is ProviderConfig.Ollama -> maxTokens
     is ProviderConfig.OpenAI -> maxTokens
+    is ProviderConfig.LiteRtLm -> maxTokens
     is ProviderConfig.Router -> providers.firstOrNull()?.defaultMaxTokens()
 }
 

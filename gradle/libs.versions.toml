@@ -42,6 +42,9 @@ turbine = "1.2.1"
 # Location
 play-services-location = "21.3.0"
 
+# LiteRT-LM — on-device Gemma inference (Google AI Edge)
+litertlm = "0.10.0"
+
 [libraries]
 # Kotlin
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coilCompose" }
@@ -89,6 +92,9 @@ androidx-camera-view = { module = "androidx.camera:camera-view", version.ref = "
 # Location
 material3-v190 = { module = "org.jetbrains.compose.material3:material3", version.ref = "material3" }
 play-services-location = { module = "com.google.android.gms:play-services-location", version.ref = "play-services-location" }
+
+# LiteRT-LM
+litertlm-android = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
 
 # Testing
 junit = { module = "junit:junit", version.ref = "junit" }
