@@ -11,7 +11,10 @@ import kotlinx.coroutines.IO
  */
 @Database(
     entities = [SessionEntity::class, MessageEntity::class, ContextVarEntity::class],
-    version = 1
+    version = 2,
+    autoMigrations = [
+        AutoMigration(from = 1, to = 2)
+    ]
 )
 @ConstructedBy(KoogDatabaseConstructor::class)
 public abstract class KoogDatabase : RoomDatabase() {
@@ -28,7 +31,7 @@ public expect object KoogDatabaseConstructor : RoomDatabaseConstructor<KoogDatab
 
 /**
  * Shared factory to create the database instance across platforms.
- * 
+ *
  * @param builder The platform-specific builder (e.g., from `Room.databaseBuilder`).
  */
 public fun createKoogDatabase(

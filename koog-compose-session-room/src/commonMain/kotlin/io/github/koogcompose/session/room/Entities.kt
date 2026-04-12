@@ -7,6 +7,12 @@ public data class SessionEntity(
     @PrimaryKey val sessionId: String,
     val currentPhaseName: String,
     val serializedState: String? = null,
+    /**
+     * Schema version of [serializedState]. Increment when the app state
+     * data class changes in a breaking way. 0 means pre-versioning.
+     */
+    @ColumnInfo(defaultValue = "0")
+    val serializedStateVersion: Int = 0,
     val toolCallCountsJson: String? = null,
     val createdAt: Long,
     val updatedAt: Long

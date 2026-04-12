@@ -716,6 +716,76 @@ val context = koogCompose {
 
 ---
 
+## Schema migration for persisted state
+
+When your app state data class evolves (new fields, renamed properties, removed fields), **old persisted sessions will fail to deserialize** unless you handle migration. koog-compose v0.3.2 includes built-in migration hooks to prevent data loss.
+
+### How it works
+
+`AgentSession` tracks a `serializedStateVersion` alongside the raw JSON `serializedState`. When you upgrade your app state, increment the version and define an upgrade path:
+
+```kotlin
+@Serializable
+data class AppState(
+    val userId: String,
+    val intent: Intent? = null,
+    val location: Coordinates? = null,
+    val themeMode: ThemeMode = ThemeMode.System // ← new field in v2
+)
+
+val stateMigration = object : StateMigration<AppState> {
+    override val schemaVersion: Int = 2
+
+    override suspend fun migrate(
+        json: JsonObject,
+        fromVersion: Int
+    ): JsonObject {
+        return when (fromVersion) {
+            0, 1 -> json + ("themeMode" to JsonPrimitive("System"))
+            else -> json
+        }
+    }
+
+    override fun decodeMigrated(json: JsonObject): AppState {
+        return Json.decodeFromJsonElement(serializer(), json)
+    }
+}
+```
+
+### Using with RoomSessionStore
+
+Pass your serializer and migration to the constructor:
+
+```kotlin
+val sessionStore = RoomSessionStore<AppState>(
+    dao = db.koogSessionDao(),
+    stateSerializer = AppState.serializer(),
+    stateMigration = stateMigration // optional — defaults to lenient parsing
+)
+```
+
+If you omit `stateMigration`, the store falls back to `StateMigration.lenient()` which uses `ignoreUnknownKeys = true` and `coerceInputValues = true` — this survives **added fields with defaults** and **removed fields** but NOT **renamed fields**.
+
+### Using with RedisSessionStore
+
+`RedisSessionStore` serializes the full `AgentSession` as JSON. It already uses `ignoreUnknownKeys = true` and `coerceInputValues = true`, so new fields with defaults and removed fields are handled automatically. For renamed fields, you'll need to migrate the full `AgentSession` JSON before deserialization — implement a custom store or pre-migrate at the Redis level.
+
+### Room database migration
+
+The `:session-room` module includes a Room migration (`v1 → v2`) that adds the `serializedStateVersion` column automatically.
+
+### Quick checklist
+
+| Change | Breaking? | Handled by default? | Needs migration? |
+|---|---|---|---|
+| Add field with default value | No | ✅ Yes (`coerceInputValues`) | No |
+| Add field with nullable type | No | ✅ Yes (`coerceInputValues`) | No |
+| Remove a field | No | ✅ Yes (`ignoreUnknownKeys`) | No |
+| Rename a field | **Yes** | ❌ No | ✅ Yes |
+| Change a field type | **Yes** | ❌ No | ✅ Yes |
+
+---
+
 ## Platform support
 
 | Feature | Android | iOS | Desktop (JVM) |
@@ -761,6 +831,9 @@ val context = koogCompose {
 - ✅ Background task tools via WorkManager (Android)
 - ✅ RoomSessionStore persists `serializedState` and `toolCallCounts`
 - ✅ `KoogRoutine` registers phase tools and transitions
+- ✅ Schema migration utilities — `StateMigration` interface for evolving app state
+- ✅ Lenient deserialization by default (`ignoreUnknownKeys` + `coerceInputValues`)
+- ✅ Room database auto-migration (v1 → v2) for `serializedStateVersion` column
 
 ### v0.4
 - **iOS device parity** — `CLLocation` and `PHPicker` tool support
@@ -771,7 +844,6 @@ val context = koogCompose {
 ### v0.5
 - **Screenshot context tool** — give the agent a view of the current screen
 - **Voice slot** — LiveKit-compatible audio input/output in the UI module
-- **Schema migration utilities** — migrate persisted structured outputs across versions
 
 ---
 

@@ -59,7 +59,10 @@ class RedisSessionStore(
     private val keyPrefix: String = "koog:session:"
 ) : SessionStore {
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
     // Jedis pool — lazily initialised so the store can be created on the main thread
     private var _pool: redis.clients.jedis.JedisPool? = null
