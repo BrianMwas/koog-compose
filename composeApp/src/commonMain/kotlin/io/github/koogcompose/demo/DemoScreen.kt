@@ -20,10 +20,10 @@ import kotlinx.coroutines.launch
  */
 class DemoViewModel(
     agentDef: KoogDefinition<AppState>,
-    executor: ai.koog.prompt.executor.model.PromptExecutor,
 ) : ViewModel() {
 
     private val context: KoogComposeContext<AppState> = agentDef as KoogComposeContext<AppState>
+    private val executor: ai.koog.prompt.executor.model.PromptExecutor = agentDef.createExecutor()
 
     val session = PhaseSession(
         context = context,

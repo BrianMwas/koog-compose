@@ -1,4 +1,4 @@
-package io.github.koogcompose.device.session
+package io.github.koogcompose.session.room
 
 
 import io.github.koogcompose.session.AgentSession
@@ -9,7 +9,7 @@ import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 
 /**
- * Redis-backed [SessionStore] for koog-compose-device.
+ * Redis-backed [SessionStore] for koog-compose.
  *
  * Persists full LLM message history to Redis. Suitable for:
  *  - Server-assisted Android apps that need multi-device session continuity
@@ -37,11 +37,9 @@ import kotlin.time.Clock
  * )
  * ```
  *
- * Dependencies (add to koog-compose-device build.gradle.kts):
+ * Dependencies (already included in koog-compose-session-room:androidMain):
  * ```kotlin
  * implementation("redis.clients:jedis:5.1.0")
- * // or for Lettuce (coroutine-native):
- * // implementation("io.lettuce:lettuce-core:6.3.2.RELEASE")
  * ```
  *
  * NOTE: Network I/O is dispatched on [Dispatchers.IO]. Redis calls are

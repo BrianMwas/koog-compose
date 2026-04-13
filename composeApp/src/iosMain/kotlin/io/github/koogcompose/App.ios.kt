@@ -18,9 +18,8 @@ fun App() {
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             val agentDef: KoogDefinition<AppState> = remember { buildDemoContext() }
-            val executor = remember(agentDef) { agentDef.createExecutor() }
             val viewModel = viewModel {
-                DemoViewModel(agentDef, executor)
+                DemoViewModel(agentDef)
             }
             DemoScreen(viewModel)
         }

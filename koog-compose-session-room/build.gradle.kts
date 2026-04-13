@@ -25,6 +25,9 @@ kotlin {
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
         }
+        androidMain.dependencies {
+            implementation("redis.clients:jedis:5.1.0")
+        }
     }
 }
 
