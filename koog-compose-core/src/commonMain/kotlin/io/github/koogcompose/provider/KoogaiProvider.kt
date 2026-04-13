@@ -1,11 +1,9 @@
 package io.github.koogcompose.provider
 
-import ai.koog.agents.core.tools.ToolDescriptor
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.prompt.cache.memory.InMemoryPromptCache
 import ai.koog.prompt.dsl.Prompt
 import ai.koog.prompt.dsl.prompt
-import ai.koog.prompt.dsl.ModerationResult
 import ai.koog.prompt.executor.cached.CachedPromptExecutor
 import ai.koog.prompt.executor.clients.LLMClient
 import ai.koog.prompt.executor.clients.anthropic.AnthropicClientSettings
@@ -41,24 +39,16 @@ import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.MessageRole
 import io.github.koogcompose.session.ToolMessageKind
 import io.github.koogcompose.tool.SecureTool
-import io.github.koogcompose.tool.ToolResult
 import io.github.koogcompose.tool.toKoogTool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.put
 import kotlin.time.Clock
 
 internal class KoogAIProvider<S>(
