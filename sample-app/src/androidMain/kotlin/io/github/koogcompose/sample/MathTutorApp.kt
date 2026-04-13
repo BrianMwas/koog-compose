@@ -7,10 +7,16 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ProgressIndicatorDefaults
 import androidx.compose.material3.Scaffold
@@ -26,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import io.github.koogcompose.litertlm.LiteRtLmProvider
 import io.github.koogcompose.session.Attachment
@@ -119,7 +126,7 @@ fun MathTutorApp(
                         You are a patient, encouraging math tutor for students.
                         When shown a photo of a math problem, explain the solution step by step.
                         Use clear, simple language. Never just give the answer — teach the method.
-                        Use KaTeX notation for math: $$x^2 + 2x + 1 = 0$$
+                        Use KaTeX notation for math: ${'$'}x^2 + 2x + 1 = 0${'$'}
                         When the user asks via voice, respond with clear explanations.
                         If the user doesn't understand, re-explain differently.
                         """.trimIndent()
@@ -249,13 +256,13 @@ private fun MathTutorScreen(
             .statusBarsPadding(),
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            androidx.compose.foundation.layout.Column(
-                modifier = androidx.compose.foundation.layout.fillMaxWidth()
+            Column(
+                modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
                     text = "Math Tutor (Offline AI)",
                     style = MaterialTheme.typography.titleLarge,
-                    modifier = androidx.compose.foundation.layout.padding(
+                    modifier = Modifier.padding(
                         horizontal = 16.dp, vertical = 12.dp
                     ),
                 )
@@ -263,7 +270,7 @@ private fun MathTutorScreen(
                     text = "Powered by Gemma 3 — no internet needed",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = androidx.compose.foundation.layout.padding(
+                    modifier = Modifier.padding(
                         start = 16.dp, bottom = 4.dp
                     ),
                 )
