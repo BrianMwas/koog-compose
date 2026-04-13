@@ -76,17 +76,10 @@ public class KoogRoutine(
             serializer = KotlinxSerializer()
         )
 
-        // Register ALL tools — global + all phases + all transitions.
-        // This matches PhaseAwareAgent's approach so the LLM has full tool
-        // visibility regardless of which phase it's currently in.
+        // Only session-global tools live on the agent-level registry.
+        // Phase-local and transition tools are scoped on the graph subgraphs.
         val toolRegistry = KoogToolRegistry {
             context.toolRegistry.all.forEach { tool(it.toKoogTool()) }
-            context.phaseRegistry.all.forEach { phase ->
-                phase.toolRegistry.all.forEach { tool(it.toKoogTool()) }
-                phase.transitions.forEach { transition ->
-                    tool(transition.toTool().toKoogTool())
-                }
-            }
         }
 
         return AIAgent(

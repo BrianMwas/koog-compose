@@ -213,6 +213,7 @@ No form to fill. No start/stop buttons. No dashboard to check. No app-switching.
 io.github.brianmwas.koog_compose:koog-compose-core          ← DSL, agent runtime, phase engine   (required)
 io.github.brianmwas.koog_compose:koog-compose-ui            ← Material 3 Compose components       (optional)
 io.github.brianmwas.koog_compose:koog-compose-device        ← Android/iOS device tools            (optional)
+io.github.brianmwas.koog_compose:koog-compose-mediapipe     ← On-device ML models (LiteRT-LM, Apple FMs)  (optional)
 io.github.brianmwas.koog_compose:koog-compose-testing       ← Deterministic fake executor + test DSL
 io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed persistent memory       (optional)
 ```
@@ -223,10 +224,11 @@ io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed pers
 
 ```kotlin
 dependencies {
-    implementation("io.github.brianmwas.koog_compose:koog-compose-core:1.2.0")
-    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:1.2.0")            // Compose UI components
-    implementation("io.github.brianmwas.koog_compose:koog-compose-device:1.2.0")        // Android/iOS device tools
-    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:1.2.0")  // Persistent memory via Room
+    implementation("io.github.brianmwas.koog_compose:koog-compose-core:1.3.0")
+    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:1.3.0")            // Compose UI components
+    implementation("io.github.brianmwas.koog_compose:koog-compose-device:1.3.0")        // Android/iOS device tools
+    implementation("io.github.brianmwas.koog_compose:koog-compose-mediapipe:1.3.0")     // On-device ML models
+    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:1.3.0")  // Persistent memory via Room
 }
 ```
 
@@ -259,7 +261,18 @@ data class RunState(
 
 ```kotlin
 val fitnessAgent = koogCompose<RunState> {
-    provider { ollama(model = "llama3.2") } // on-device, no server needed
+    // Option 1: On-device model (Android: LiteRT-LM, iOS: Apple Foundation Models)
+    provider {
+        onDevice(modelPath = "/data/models/gemma-4-E2B.litertlm") {
+            maxToolRounds(8)
+            onUnavailable {
+                anthropic(apiKey = BuildConfig.KEY)
+            }
+        }
+    }
+
+    // Option 2: Cloud provider
+    provider { ollama(model = "llama3.2") }
 
     initialState { RunState(userName = "brian") }
 
@@ -676,6 +689,49 @@ val session = koogSession<Unit> {
 
 Handoff options: `description`, `continueHistory` (shared or fresh history), `onHandoff` callback.
 
+### Provider configuration
+
+koog-compose supports multiple AI providers through a unified DSL:
+
+```kotlin
+provider {
+    // On-device models (Android: LiteRT-LM, iOS: Apple Foundation Models)
+    onDevice(modelPath = "/data/models/gemma-4-E2B.litertlm") {
+        maxToolRounds(8)
+        onUnavailable { anthropic(apiKey = BuildConfig.KEY) }
+    }
+
+    // Cloud providers
+    anthropic(apiKey = BuildConfig.ANTHROPIC_KEY) { model = "claude-sonnet-4-20250514" }
+    openai(apiKey = BuildConfig.OPENAI_KEY) { model = "gpt-4o" }
+    ollama(model = "llama3.2") { baseUrl = "http://10.0.2.2:11434" }
+
+    // Router with fallback strategy
+    router(strategy = RouterStrategy.Fallback) {
+        provider { onDevice(modelPath = "...") }
+        provider { anthropic(apiKey = BuildConfig.KEY) }
+    }
+}
+```
+
+**On-device providers** run the model locally on the device. Tools still go through koog's SecureTool pipeline (validation + guardrails). Automatic tool calling is disabled so koog remains the orchestrator.
+
+| Platform | Implementation | Status |
+|---|---|---|
+| Android | LiteRT-LM with Gemma 4 (E2B/E4B .litertlm model) | ✅ Implemented |
+| iOS | Apple Foundation Models (iOS 26+) | ✅ Implemented |
+| Desktop | Stub (not implemented yet) | Planned |
+
+**Fallback configuration** — when the on-device model is unavailable (device not eligible, model not ready), koog-compose automatically falls back to the configured cloud provider:
+
+```kotlin
+onDevice(modelPath = "...") {
+    onUnavailable {
+        anthropic(apiKey = BuildConfig.KEY)
+    }
+}
+```
+
 ### Privacy & data ownership
 
 All data stays on the user's device by default. Nothing is transmitted externally unless you explicitly wire it up.
@@ -983,16 +1039,20 @@ The `:session-room` module includes a Room migration (`v1 → v2`) that adds the
 | Room session store | ✅ | ✅ | — |
 | Device tools (location) | ✅ | — | — |
 | WorkManager background | ✅ | — | — |
+| On-device provider (LiteRT-LM) | ✅ | — | — |
+| On-device provider (Apple FMs) | — | ✅ (iOS 26+) | — |
+| Provider fallback routing | ✅ | ✅ | ✅ |
 
 > **Note:** `koog-compose-core`, `koog-compose-ui`, and `koog-compose-session-room`
 > all compile for Android and iOS. `koog-compose-device` is Android-only
-> (WorkManager, Play Services Location). Desktop support for UI is planned.
+> (WorkManager, Play Services Location). `koog-compose-mediapipe` compiles for
+> Android, iOS, and Desktop — on-device providers are platform-specific.
 
 ---
 
 ## Roadmap
 
-### v1.2.0 (current)
+### v1.2.0
 - ✅ Structured outputs with validation & self-correction
 - ✅ Schema versioning for evolving output types
 - ✅ Tool call frequency tracking per session
@@ -1014,11 +1074,34 @@ The `:session-room` module includes a Room migration (`v1 → v2`) that adds the
 - ✅ Lenient deserialization by default (`ignoreUnknownKeys` + `coerceInputValues`)
 - ✅ Room database auto-migration (v1 → v2) for `serializedStateVersion` column
 
-### v1.3.0
-- **ActivityResult integration** — camera, file picker, permissions as agent tools
-- **Structured observability** — pluggable `EventSink` for Firebase, Datadog, custom backends
-- **Custom PersistenceStorageProvider** — SQLite, Keychain, cloud sync
-- **Desktop Compose UI** — JVM support for `koog-compose-ui`
+### v1.3.0 (current)
+- ✅ Structured outputs with validation & self-correction
+- ✅ Schema versioning for evolving output types
+- ✅ Tool call frequency tracking per session
+- ✅ Multi-agent handoff via `handoff(agentRef)`
+- ✅ `[ToolName]` reference resolution in phase instructions
+- ✅ Subphases — sequential steps inside a single phase
+- ✅ Parallel branches — concurrent tool execution via `nodeExecuteMultipleTools(parallelTools = true)`
+- ✅ `resumeAt()` — jump to any phase from external triggers
+- ✅ Reusable templates — `phaseTemplate` and `subphaseTemplate` with `include()`
+- ✅ Nesting guardrails — clear errors for accidental deep nesting
+- ✅ Rich JSON Schema tool parameter types (String, Integer, Boolean, Enum, Array, Object)
+- ✅ Privacy & data ownership — all data stays on device by default
+- ✅ Audit log args redaction for PII-sensitive apps
+- ✅ Agent checkpoints (opt-in via `Persistence` feature)
+- ✅ Background task tools via WorkManager (Android)
+- ✅ RoomSessionStore persists `serializedState` and `toolCallCounts`
+- ✅ `KoogRoutine` registers phase tools and transitions
+- ✅ Schema migration utilities — `StateMigration` interface for evolving app state
+- ✅ Lenient deserialization by default (`ignoreUnknownKeys` + `coerceInputValues`)
+- ✅ Room database auto-migration (v1 → v2) for `serializedStateVersion` column
+- ✅ **On-device provider** — `onDevice { }` DSL with fallback routing
+- ✅ **LiteRT-LM integration** — Gemma 4 (E2B/E4B) on Android via MediaPipe
+- ✅ **Apple Foundation Models** — on-device inference on iOS 26+
+- ✅ **Scoped tool registration** — phase-local and transition tools scoped to subgraphs, not global
+- ✅ **Deduplicated tool resolution** — `resolveEffectiveTools()` prevents conflicts by name
+- ✅ **ProviderRuntimeRegistry** — pluggable AIProvider factory for platform modules
+- ✅ **Multi-platform MediaPipe module** — Android, iOS, Desktop targets
 
 ### v1.4.0
 - **Screenshot context tool** — give the agent a view of the current screen

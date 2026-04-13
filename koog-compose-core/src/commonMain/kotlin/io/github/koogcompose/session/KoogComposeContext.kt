@@ -7,6 +7,7 @@ import io.github.koogcompose.phase.toTool
 import io.github.koogcompose.prompt.PromptStack
 import io.github.koogcompose.provider.AIProvider
 import io.github.koogcompose.provider.KoogAIProvider
+import io.github.koogcompose.provider.ProviderRuntimeRegistry
 import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.provider.ProviderConfigBuilder
 import io.github.koogcompose.security.Guardrails
@@ -284,7 +285,8 @@ public data class KoogComposeContext<S>(
     val config: KoogConfig,
     val contextualInstructions: List<ContextualInstruction> = emptyList(),
 ) : KoogDefinition<S> {
-    public fun createProvider(): AIProvider = KoogAIProvider(this)
+    public fun createProvider(): AIProvider =
+        ProviderRuntimeRegistry.create(this) ?: KoogAIProvider(this)
     public val provider: AIProvider get() = createProvider()
 
     /**
@@ -349,9 +351,14 @@ public data class KoogComposeContext<S>(
 
     public fun resolveEffectiveTools(): List<SecureTool> {
         val phase = activePhase ?: phaseRegistry.initialPhase
-        val baseTools = phase?.toolRegistry?.all ?: toolRegistry.all
+        val baseTools = buildList {
+            addAll(toolRegistry.all)
+            if (phase != null) {
+                addAll(phase.toolRegistry.all)
+            }
+        }
         val transitionTools = phase?.transitions?.map { it.toTool() } ?: emptyList()
-        return baseTools + transitionTools
+        return (baseTools + transitionTools).distinctBy(SecureTool::name)
     }
 
     public class Builder<S> {
