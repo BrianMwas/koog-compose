@@ -47,7 +47,7 @@ Real examples that ship with koog-compose concepts:
 
 | Scenario | Device tools | The magic |
 |---|---|---|
-| **Run tracker** | BackgroundTimerTool, LocationTrackerTool | User says "I'm back" — agent stops timer, pulls GPS, calculates stats |
+| **Run coach** | WeatherTool, RouteSafetyTool, HistoricalRunTool, BackgroundTimerTool | "Plan your 5K — it's 18°C, route is clear, last time was 24min. You beat it by 2min — 5:38 pace." |
 | **Focus session** | ScreenBlockTool, PomodoroTimerTool | Agent schedules check-ins during breaks, asks how focus went |
 | **Medicine reminder** | AlarmSchedulerTool (WorkManager) | Agent schedules alarm, confirms when user says "I took it" |
 | **Photo journal** | CameraTool, GalleryPickerTool | User says "add this to today" — agent captures, tags, stores |
@@ -55,46 +55,155 @@ Real examples that ship with koog-compose concepts:
 
 ---
 
-## Hero example: Run tracker
+## Hero example: Intelligent run coach
+
+You tell the agent "I'm planning a run this afternoon." It doesn't just set a timer — it pulls the weather, checks route safety at that time of day, estimates duration based on your pace history, and reminds you of your last run. When you say "I'm back," it stops everything and gives you a comparison summary.
 
 ```kotlin
+@Serializable
 data class RunState(
+    val userName: String,
     val isRunning: Boolean = false,
+    val plannedDistanceKm: Double = 5.0,
+    val estimatedDurationMs: Long = 0,
+    val weatherSummary: String? = null,
+    val routeSafety: String? = null,
+    val suggestedWarmup: String? = null,
+    val suggestedMeal: String? = null,
+    val lastRunPace: String? = null,
     val durationMs: Long = 0,
     val distanceKm: Double = 0.0,
+    val pace: String? = null,
     val gpsTrace: List<GpsPoint> = emptyList(),
+    val caloriesBurned: Double = 0.0,
+    val postRunMeal: String? = null,
 )
 
-val fitnessAgent = koogCompose<RunState> {
+val runCoach = koogCompose<RunState> {
     provider { ollama(model = "llama3.2") } // on-device, no server
 
-    initialState { RunState() }
+    initialState {
+        RunState(
+            userName = "brian",
+            lastRunPace = "6:12 min/km (5K in 31min)",
+        )
+    }
 
     phases {
-        phase("ready", initial = true) {
-            instructions { "Ask the user if they're ready for their run." }
-            tool(StartRunTimerTool(stateStore))
+        phase("plan_run", initial = true) {
+            instructions {
+                """
+                The user wants to plan a run. Before they head out:
+                1. Use [GetWeather] to check current conditions
+                2. Use [CheckRouteSafety] to verify the route is safe at this time
+                3. Use [EstimateDuration] to calculate based on their pace history
+                4. Remind them of their last run
+                5. Present a briefing and ask if they're ready
+                """.trimIndent()
+            }
+            tool(GetWeatherTool(stateStore))
+            tool(CheckRouteSafetyTool(stateStore))
+            tool(EstimateDurationTool(stateStore))
+            tool(ConfirmReadyTool(stateStore))
+        }
+        phase("prep") {
+            instructions {
+                """
+                Before the user heads out:
+                1. Use [SuggestWarmup] to give them 2-3 dynamic stretches
+                   based on today's distance and their injury history
+                2. Use [SuggestPreRunMeal] to recommend what to eat right now
+                   based on time until run, weather, and their goals
+                3. Walk them through a quick warmup if they want
+                4. When they confirm they're warmed up, transition to running
+                """.trimIndent()
+            }
+            tool(SuggestWarmupTool(stateStore))
+            tool(SuggestPreRunMealTool(stateStore))
         }
         phase("running") {
-            instructions { "The run is active. Check in periodically. Wait for the user to say they're back." }
-            tool(BackgroundTimerTool())    // WorkManager keeps this alive
-            tool(LocationTrackerTool(stateStore)) // GPS coordinates over time
+            instructions {
+                """
+                The run is active. A background timer and GPS tracker are running.
+                When the user says "I'm back" or "I'm done," transition to the summary phase.
+                Check in briefly if they haven't said anything in 15 minutes.
+                """.trimIndent()
+            }
+            tool(BackgroundTimerTool())    // WorkManager — survives app going to background
+            tool(LocationTrackerTool(stateStore)) // GPS trace over time
         }
         phase("finished") {
             instructions {
                 """
-                The user is back. Summarise their run: duration, distance, pace.
-                Use the GPS trace from state to calculate stats.
+                The user has finished their run. You have:
+                - Actual duration, distance, and calories from state
+                - Their planned distance and estimated duration
+                - Their last run's pace for comparison
+                Present a smart summary: how they did vs their plan, vs their last run,
+                and their current pace. Be encouraging but honest if they were slower.
+                Then use [SuggestPostRunMeal] to recommend recovery nutrition.
                 """.trimIndent()
             }
             tool(StopTimerTool(stateStore))
+            tool(CalculatePaceTool(stateStore))
+            tool(SuggestPostRunMealTool(stateStore))
             tool(SaveRunTool(stateStore))
         }
     }
 }
 ```
 
-The user just says "I'm back" — the agent stops the timer, pulls the GPS trace, calculates the stats, and responds naturally. No form, no button, no explicit stop action.
+The flow:
+
+```
+User: "Planning a 5K this afternoon"
+Agent: [pulls weather] "18°C, partly cloudy — great running weather."
+       [checks route] "Uhuru Park route is clear this time of day."
+       [checks history] "Last time you did 5K in 31 minutes — 6:12 pace.
+                        I'd estimate 29–30 minutes if you keep that rhythm."
+       "Ready to prep?"
+
+User: "Yeah"
+Agent: "Here's your warmup — 3 moves, 5 minutes total:
+        1. Leg swings × 10 each side (loosens hips)
+        2. High knees × 30 seconds (gets heart rate up)
+        3. Walking lunges × 8 each leg (activates glutes)"
+       [suggests meal] "Eat a banana + a spoon of peanut butter now — quick carbs,
+        easy on the stomach. You've got 20 minutes before you head out."
+
+User: "Done warming up, heading out"
+Agent: "Timer started. GPS and accelerometer are recording. See you when you're back!"
+       [runs in background via WorkManager — app can be closed]
+
+[During the run — accelerometer detects sudden stop]
+Agent: "You've been stationary for 2 minutes. Everything okay?"
+
+User: "Yeah, just tying my shoe"
+Agent: "All good — GPS is still recording. Keep going!"
+
+User: "I'm back"
+Agent: [stops timer] "Nice work! 5K in 28:45 — 5:45 pace.
+       You beat your last run by 2:15 and hit your plan 2 minutes early.
+       Fastest split was km 3–4 at 5:28. Burned ~340 calories."
+       [recovery meal] "Grab a protein shake or Greek yogurt with berries within
+        30 minutes — your muscles are primed to absorb it."
+       "Want me to log this run?"
+```
+
+But that's just the run. The agent doesn't sleep when you're not running — it's watching your whole day:
+
+```
+[Afternoon — screen time data shows 8 hours on TikTok]
+Agent: "Quick check-in — you've had TikTok open for 8 hours today.
+        You also have 3 unfinished items on your todo list.
+        Want me to block it for the next 2 hours while you knock those out?"
+
+User: "Yeah, do it"
+Agent: [blocks TikTok via Screen Time API] "Blocked for 2 hours.
+        First up: 'Finish project proposal' — want me to break it into steps?"
+```
+
+No form to fill. No start/stop buttons. No dashboard to check. No app-switching. Just conversation that understands your body, your phone, and your day.
 
 ---
 
