@@ -19,6 +19,9 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":koog-compose-core"))
+            implementation(libs.koog.agents)
+            implementation(libs.koog.agents.core)
+            implementation(libs.koog.prompt.executor)
             implementation(compose.runtime)
             implementation(compose.foundation)
             implementation(libs.material3.v190)
@@ -30,9 +33,12 @@ kotlin {
         }
         androidMain.dependencies {
             implementation(project(":koog-compose-ui"))
+            implementation(project(":koog-compose-session-room"))
             implementation(project(":koog-compose-mediapipe"))
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.core.ktx)
+            implementation(compose.materialIconsExtended)
+            implementation("org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
         }
     }
 }

@@ -233,7 +233,7 @@ private suspend fun ensureModelDownloaded(
 /**
  * Saves a bitmap to the app's cache directory and returns the file.
  */
-private fun saveBitmapToCache(context: Context, bitmap: android.graphics.Bitmap): File {
+internal fun saveBitmapToCache(context: Context, bitmap: android.graphics.Bitmap): File {
     val cacheDir = File(context.cacheDir, "photos")
     cacheDir.mkdirs()
     val file = File(cacheDir, "math_problem_${System.currentTimeMillis()}.jpg")
