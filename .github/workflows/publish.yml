@@ -5,12 +5,18 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'       # v1.0.0
       - 'v[0-9]+.[0-9]+.[0-9]+-*'      # v1.0.0-beta01, v1.0.0-rc1
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (e.g. 1.5.0)'
+        required: true
+        type: string
 
 permissions:
   contents: write                        # required to create GitHub Releases
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: publish-${{ github.event.inputs.version || github.ref_name }}
   cancel-in-progress: false             # never cancel a publish mid-flight
 
 jobs:
@@ -46,7 +52,7 @@ jobs:
   publish:
     name: Publish to Maven Central
     needs: test
-    if: needs.test.result == 'success'
+    if: always() && needs.test.result == 'success'
     runs-on: macos-latest
     environment: production
     steps:
@@ -58,11 +64,15 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
           cache: gradle
-      - name: Extract version from tag
+      - name: Resolve version
         id: version
         run: |
-          TAG="${{ github.ref_name }}"
-          echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            TAG="${{ github.ref_name }}"
+            echo "VERSION=${TAG#v}" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish and release
         env:
           VERSION_NAME: ${{ steps.version.outputs.VERSION }}
@@ -89,9 +99,9 @@ jobs:
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
+          tag_name: v${{ steps.version.outputs.VERSION }}
+          name: v${{ steps.version.outputs.VERSION }}
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
           generate_release_notes: true
           token: ${{ secrets.GITHUB_TOKEN }}
