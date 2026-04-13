@@ -106,6 +106,29 @@ public sealed class ProviderConfig {
         val providers: List<ProviderConfig>,
         val strategy: RouterStrategy = RouterStrategy.RoundRobin,
     ) : ProviderConfig()
+
+    /**
+     * On-device provider — runs the model locally on the device.
+     *
+     * Android: LiteRT-LM with Gemma 4 (E2B/E4B .litertlm model).
+     * iOS: planned Apple Foundation Models integration. Not implemented yet.
+     *
+     * Tools go through koog's SecureTool pipeline (validation + guardrails).
+     * Automatic tool calling is disabled so koog remains the orchestrator.
+     *
+     * ```kotlin
+     * provider {
+     *     onDevice(modelPath = "/data/models/gemma-4-E2B.litertlm") {
+     *         onUnavailable { anthropic(apiKey = BuildConfig.KEY) }
+     *     }
+     * }
+     * ```
+     */
+    public data class OnDevice(
+        val modelPath: String = "",
+        val maxToolRounds: Int = 5,
+        val fallback: ProviderConfig? = null,
+    ) : ProviderConfig()
 }
 
 public enum class RouterStrategy { RoundRobin, Fallback }
@@ -150,6 +173,36 @@ public class ProviderConfigBuilder {
         block: LiteRtLmBuilder.() -> Unit = {}
     ) {
         config = LiteRtLmBuilder(modelPath).apply(block).build()
+    }
+
+    /**
+     * Configures an on-device provider.
+     *
+     * Simple usage:
+     * ```kotlin
+     * provider {
+     *     onDevice(modelPath = "/data/models/gemma-4-E2B.litertlm")
+     * }
+     * ```
+     *
+     * With tools and fallback:
+     * ```kotlin
+     * provider {
+     *     onDevice(modelPath = "/data/models/gemma-4-E4B.litertlm") {
+     *         maxToolRounds(8)
+     *         onUnavailable {
+     *             anthropic(apiKey = BuildConfig.KEY)
+     *         }
+     *     }
+     * }
+     * ```
+     */
+    public fun onDevice(
+        modelPath: String = "",
+        block: OnDeviceProviderBuilder.() -> Unit = {},
+    ) {
+        val builder = OnDeviceProviderBuilder(modelPath).apply(block)
+        config = builder.build()
     }
 
     public fun router(
@@ -225,4 +278,41 @@ public class RouterBuilder(private val strategy: RouterStrategy) {
     }
 
     public fun build(): ProviderConfig = ProviderConfig.Router(providers.toList(), strategy)
+}
+
+/**
+ * Builder for [ProviderConfig.OnDevice] inside the provider DSL.
+ */
+public class OnDeviceProviderBuilder internal constructor(
+    private val modelPath: String,
+) {
+    private var maxToolRounds: Int = 5
+    internal var unavailableHandler: (() -> ProviderConfig)? = null
+
+    /** Maximum agentic loop iterations before capping and returning. */
+    public fun maxToolRounds(max: Int) {
+        require(max > 0) { "maxToolRounds must be > 0" }
+        this.maxToolRounds = max
+    }
+
+    /**
+     * Provides a fallback provider when the on-device model is unavailable.
+     *
+     * ```kotlin
+     * onUnavailable { anthropic(apiKey = BuildConfig.KEY) }
+     * // or
+     * onUnavailable { ollama(model = "llama3.2") }
+     * ```
+     */
+    public fun onUnavailable(fallback: ProviderConfigBuilder.() -> Unit) {
+        this.unavailableHandler = { ProviderConfigBuilder().apply(fallback).build() }
+    }
+
+    internal fun build(): ProviderConfig {
+        return ProviderConfig.OnDevice(
+            modelPath = modelPath,
+            maxToolRounds = maxToolRounds,
+            fallback = unavailableHandler?.invoke(),
+        )
+    }
 }

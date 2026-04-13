@@ -85,33 +85,12 @@ public object PhaseAwareAgent {
         val llmModel = provider.resolveModelForConfig()
         val strategy = PhaseStrategyBuilder.build(resolvedContext, strategyName)
 
-        // Agent-level registry: all tools from all phases (including subphases
-        // and parallel branches) + transitions.
+        // Agent-level registry: only session-global tools live here.
+        // Phase-local and transition tools are scoped on the subgraphs built
+        // by PhaseStrategyBuilder, which keeps the model's visible tool set
+        // smaller for each active phase.
         val globalKoogRegistry = KoogToolRegistry {
             resolvedContext.toolRegistry.all.forEach { tool(it.toKoogTool()) }
-            resolvedContext.phaseRegistry.all.forEach { phase ->
-                // Parent phase tools
-                phase.toolRegistry.all.forEach { tool(it.toKoogTool()) }
-                phase.transitions.forEach { transition ->
-                    tool(transition.toTool().toKoogTool())
-                }
-                // Subphase tools + transitions
-                phase.subphases.forEach { sub ->
-                    sub.toolRegistry.all.forEach { tool(it.toKoogTool()) }
-                    sub.transitions.forEach { transition ->
-                        tool(transition.toTool().toKoogTool())
-                    }
-                }
-                // Parallel branch tools + transitions
-                phase.parallelGroups.forEach { group ->
-                    group.forEach { branch ->
-                        branch.toolRegistry.all.forEach { tool(it.toKoogTool()) }
-                        branch.transitions.forEach { transition ->
-                            tool(transition.toTool().toKoogTool())
-                        }
-                    }
-                }
-            }
         }
 
         val initialPhase = resolvedContext.phaseRegistry.initialPhase
