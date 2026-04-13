@@ -39,7 +39,21 @@ dependencies {
 }
 ```
 
-### 2. Define your state
+### 2. Install the on-device bridge (Android only)
+
+If you're using `provider { onDevice(...) }`, register the runtime bridge once at startup:
+
+```kotlin
+import io.github.koogcompose.provider.ondevice.installOnDeviceProviderSupport
+
+fun initAi() {
+    installOnDeviceProviderSupport()  // Application.onCreate() or main()
+}
+```
+
+On iOS this happens automatically — `iOSApp.init()` installs the Apple Foundation Models bridge on launch.
+
+### 3. Define your state
 
 Everything flows through a single typed state object. Device tools write to it; your Compose UI reads from it.
 
@@ -54,7 +68,7 @@ data class RunState(
 )
 ```
 
-### 3. Build the agent
+### 4. Build the agent
 
 ```kotlin
 val runCoach = koogCompose<RunState> {
@@ -92,7 +106,7 @@ val runCoach = koogCompose<RunState> {
 }
 ```
 
-### 4. Wire it to a ViewModel
+### 5. Wire it to a ViewModel
 
 ```kotlin
 class RunViewModel(context: KoogComposeContext<RunState>, executor: PromptExecutor) : ViewModel() {
@@ -108,7 +122,7 @@ class RunViewModel(context: KoogComposeContext<RunState>, executor: PromptExecut
 }
 ```
 
-### 5. Render it
+### 6. Render it
 
 ```kotlin
 @Composable
@@ -231,7 +245,6 @@ koog-compose runs inference locally on the device — no API key, no network cal
 ```kotlin
 provider {
     onDevice(modelPath = "/data/models/gemma-4-E2B.litertlm") {
-        backend(OnDeviceBackend.GPU)
         maxToolRounds(8)
         onUnavailable {
             // Falls back automatically if the model file is missing or device isn't eligible
