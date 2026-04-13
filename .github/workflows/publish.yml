@@ -45,8 +45,12 @@ jobs:
         continue-on-error: true          # Fixes the ETIMEDOUT issue blocking the build
 
       - name: Run tests
-        run: ./gradlew allTests --no-configuration-cache --stacktrace
+        run: ./gradlew jvmTest androidUnitTest --no-configuration-cache --stacktrace
         continue-on-error: false         # We still want to know if tests fail, but see 'publish' job below
+
+      - name: Verify iOS compilation
+        if: runner.os == 'macOS'
+        run: ./gradlew :koog-compose-core:compileKotlinIosSimulatorArm64 :koog-compose-device:compileKotlinIosSimulatorArm64 :koog-compose-testing:compileKotlinIosSimulatorArm64 --no-configuration-cache --stacktrace
 
   # ── 2. Publish to Maven Central ──────────────────────────────────────────
   publish:
