@@ -12,7 +12,6 @@ import io.github.koogcompose.provider.ProviderConfigBuilder
 import io.github.koogcompose.security.Guardrails
 import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolRegistry
-import kotlin.jvm.JvmName
 
 
 /**
@@ -281,12 +280,19 @@ public data class KoogComposeContext<S>(
     val phaseRegistry: PhaseRegistry = PhaseRegistry.Empty,
     val activePhaseName: String? = null,
     val eventHandlers: EventHandlers = EventHandlers.Empty,
-    val stateStore: KoogStateStore<S>?,
+    override val stateStore: KoogStateStore<S>?,
     val config: KoogConfig,
     val contextualInstructions: List<ContextualInstruction> = emptyList(),
-) {
+) : KoogDefinition<S> {
     public fun createProvider(): AIProvider = KoogAIProvider(this)
     public val provider: AIProvider get() = createProvider()
+
+    /**
+     * Creates a [PromptExecutor] backed by this context's provider config.
+     * Use this when constructing [PhaseSession] outside of the convenience DSL.
+     */
+    override fun createExecutor(): ai.koog.prompt.executor.model.PromptExecutor =
+        io.github.koogcompose.provider.buildExecutor(providerConfig)
 
     public val activePhase: Phase? get() = activePhaseName?.let { phaseRegistry.resolve(it) }
 
@@ -431,54 +437,185 @@ public data class KoogComposeContext<S>(
 
 
 
-// Stateless sessions (no shared state needed)
-@JvmName("koogComposeStateless")
-public fun koogCompose(block: KoogComposeContext.Builder<Unit>.() -> Unit): KoogComposeContext<Unit> =
-    KoogComposeContext(block)
-
-// Stateful sessions — infer S from the initialState { } block
-@JvmName("koogComposeStateful")
-public fun <S> koogCompose(block: KoogComposeContext.Builder<S>.() -> Unit): KoogComposeContext<S> =
-    KoogComposeContext(block)
-
+// ── Shared interface ─────────────────────────────────────────────────────────
 
 /**
- * Single-agent entry point — unchanged public API, now backed by [KoogAgentDefinition].
+ * Common supertype for both single-agent ([KoogComposeContext]) and
+ * multi-agent ([KoogSession]) definitions.
  *
- * [koogCompose] is sugar for `koogAgent("default") { }`. Both return a
- * [KoogAgentDefinition], so single-agent code migrates to multi-agent by
- * wrapping in a [koogSession], not rewriting.
+ * Callers never need to pattern-match — `.stateStore` and `.createExecutor()`
+ * work regardless of which variant was built.
+ */
+public interface KoogDefinition<S> {
+    /** Shared typed state store, if `initialState { }` was called. */
+    public val stateStore: KoogStateStore<S>?
+    /** Creates a [PromptExecutor] backed by this definition's provider config. */
+    public fun createExecutor(): ai.koog.prompt.executor.model.PromptExecutor
+}
+
+// ── Unified DSL entry point ───────────────────────────────────────────────────
+
+/**
+ * Single entry point for building koog-compose agents.
  *
+ * **Single-agent** (most common):
  * ```kotlin
- * // Before
- * val context = koogCompose {
- *     provider { anthropic(apiKey = BuildConfig.KEY) }
+ * val ctx = koogCompose<AppState> {
+ *     provider { anthropic(apiKey = "...") { model = "claude-sonnet-4-5" } }
+ *     initialState { AppState() }
  *     phases {
- *         phase("greeting") {
- *             instructions { "Greet the user and offer to help." }
- *         }
- *     }
- * }
- *
- * // After — wrap, don't rewrite
- * val session = koogSession {
- *     provider { anthropic(apiKey = BuildConfig.KEY) }
- *     main {
- *         phases {
- *             phase("greeting") {
- *                 instructions { "Greet the user and offer to help." }
- *             }
+ *         phase("greeting", initial = true) {
+ *             instructions { "Greet the user." }
  *         }
  *     }
  * }
  * ```
  *
- * The [KoogAgentDefinition] returned here can be passed directly to
- * [singleAgentHandle] to obtain a [KoogSessionHandle] for `rememberChatState`.
+ * **Multi-agent** (add `main {}` and `agents {}`):
+ * ```kotlin
+ * val session = koogCompose<Unit> {
+ *     provider { anthropic(apiKey = "...") }
+ *     main {
+ *         instructions { "General assistant." }
+ *         phases {
+ *             phase("root", initial = true) {
+ *                 handoff(focusAgent) { "User asks about focus." }
+ *             }
+ *         }
+ *     }
+ *     agents(focusAgent)
+ * }
+ * ```
  *
- * @see koogAgent for the named variant.
- * @see koogSession for multi-agent sessions.
+ * @return A [KoogDefinition] — works with [PhaseSession] (single-agent)
+ *   or [SessionRunner] (multi-agent) without any branching.
  */
-public fun koogCompose(
-    block: KoogAgentDefinitionBuilder.() -> Unit
-): KoogAgentDefinition = koogAgent("default", block)
+public fun <S : Any?> koogCompose(
+    block: UnifiedAgentBuilder<S>.() -> Unit
+): KoogDefinition<S> = UnifiedAgentBuilder<S>().apply(block).build()
+
+/**
+ * Unified builder that supports both single-agent and multi-agent DSLs.
+ *
+ * When `main {}` is called → multi-agent path (builds [KoogSession]).
+ * When `main {}` is NOT called → single-agent path (builds [KoogComposeContext]).
+ */
+public class UnifiedAgentBuilder<S> {
+    private var providerConfig: ProviderConfig? = null
+    private var promptStack: PromptStack = PromptStack.Empty
+    private var toolRegistry: ToolRegistry = ToolRegistry.Empty
+    private var phaseRegistry: PhaseRegistry = PhaseRegistry.Empty
+    private var activePhaseName: String? = null
+    private var stateStore: KoogStateStore<S>? = null
+    private var stateSerializer: kotlinx.serialization.KSerializer<S>? = null
+    private var eventHandlers: EventHandlers = EventHandlers.Empty
+    private var config: KoogConfig = KoogConfig()
+    private var contextualInstructions: List<ContextualInstruction> = emptyList()
+    private var store: SessionStore = InMemorySessionStore()
+    private var sessionConfig: KoogSessionConfig = KoogSessionConfig()
+
+    // Multi-agent fields
+    private var mainAgentDefinition: KoogAgentDefinition? = null
+    private val specialists = mutableMapOf<String, KoogAgentDefinition>()
+
+    // ── Shared DSL blocks ─────────────────────────────────────────────────
+
+    public fun provider(block: ProviderConfigBuilder.() -> Unit) {
+        providerConfig = ProviderConfigBuilder().apply(block).build()
+    }
+
+    public fun prompt(block: PromptStack.Builder.() -> Unit) {
+        promptStack = PromptStack(block)
+    }
+
+    public fun tools(block: ToolRegistry.Builder.() -> Unit) {
+        toolRegistry = ToolRegistry(block)
+    }
+
+    public fun phases(block: PhaseRegistry.Builder.() -> Unit) {
+        phaseRegistry = PhaseRegistry.Builder().apply(block).build()
+        if (activePhaseName == null) {
+            activePhaseName = phaseRegistry.all.firstOrNull()?.name
+        }
+    }
+
+    public fun initialState(block: () -> S) {
+        stateStore = KoogStateStore(block())
+    }
+
+    public fun initialPhase(name: String) {
+        activePhaseName = name
+    }
+
+    public fun events(block: EventHandlers.Builder.() -> Unit) {
+        eventHandlers = EventHandlers(block)
+    }
+
+    public fun config(block: KoogConfig.Builder.() -> Unit) {
+        config = KoogConfig(block)
+    }
+
+    public fun contextual(block: ContextualInstructionsBuilder.() -> Unit) {
+        contextualInstructions = ContextualInstructionsBuilder().apply(block).build()
+    }
+
+    // ── Multi-agent DSL blocks ────────────────────────────────────────────
+
+    /**
+     * Defines the main agent. Presence of this block switches the builder
+     * into multi-agent mode.
+     */
+    public fun main(block: KoogAgentDefinitionBuilder.() -> Unit) {
+        mainAgentDefinition = KoogAgentDefinitionBuilder("main").apply(block).build()
+    }
+
+    /**
+     * Registers specialist agents for multi-agent handoff.
+     */
+    public fun agents(vararg definitions: KoogAgentDefinition) {
+        definitions.forEach { specialists[it.name] = it }
+    }
+
+    public fun store(block: () -> SessionStore) {
+        store = block()
+    }
+
+    public fun sessionConfig(block: KoogSessionConfig.Builder.() -> Unit) {
+        sessionConfig = KoogSessionConfig.Builder().apply(block).build()
+    }
+
+    // ── Build ─────────────────────────────────────────────────────────────
+
+    public fun build(): KoogDefinition<S> {
+        val provider = requireNotNull(providerConfig) {
+            "koog-compose: provider { } block is required."
+        }
+
+        return if (mainAgentDefinition != null) {
+            // Multi-agent path
+            KoogSession(
+                globalProvider = provider,
+                mainAgent = mainAgentDefinition!!,
+                agentRegistry = specialists.toMap(),
+                stateStore = stateStore,
+                stateSerializer = stateSerializer,
+                store = store,
+                config = sessionConfig,
+                eventHandlers = eventHandlers,
+            )
+        } else {
+            // Single-agent path
+            KoogComposeContext(
+                providerConfig = provider,
+                promptStack = promptStack,
+                toolRegistry = toolRegistry,
+                phaseRegistry = phaseRegistry,
+                activePhaseName = activePhaseName,
+                eventHandlers = eventHandlers,
+                stateStore = stateStore,
+                config = config,
+                contextualInstructions = contextualInstructions,
+            )
+        }
+    }
+}

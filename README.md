@@ -5,9 +5,11 @@
 [![Kotlin](https://img.shields.io/badge/kotlin-2.3.20-purple.svg)](https://kotlinlang.org)
 [![KMP](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen.svg)](https://www.jetbrains.com/kotlin-multiplatform/)
 
-A declarative Kotlin Multiplatform (KMP) runtime for building AI agents that orchestrate app logic, device capabilities, and UI — all from a single DSL.
+A declarative Kotlin Multiplatform runtime for building **on-device AI agents** that orchestrate device capabilities, background tasks, and UI — all from a single DSL.
 
-Built on [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap between Koog's custom strategy graphs and real app surfaces — giving you typed shared state, phase-aware conversations with subphases and parallel branches, multi-agent handoff, plug-and-play persistence, token-level streaming, and Material 3 UI components across Android, iOS, and Desktop.
+Built on [JetBrains Koog](https://github.com/JetBrains/koog), koog-compose lets your AI agent start a GPS tracker, schedule a background alarm, block your screen during a focus session, and respond to natural language — all without a server, without explicit buttons, and without leaving the conversation.
+
+**The conversation IS the UI.** The user says "I'm going for a run" — the agent starts the timer and GPS in the background, checks in naturally during the run, and when the user says "I'm back" it stops everything, calculates distance and pace, and responds with a summary. No form to fill. No stop button to find. Just talk.
 
 ---
 
@@ -15,19 +17,193 @@ Built on [JetBrains Koog](https://github.com/JetBrains/koog), it bridges the gap
 
 | Without koog-compose | With koog-compose |
 |---|---|
-| Wire LLM calls, tool execution, and UI state manually | Single `koogCompose { }` DSL handles the entire runtime |
+| Wire LLM calls, device APIs, and UI state manually | Single `koogCompose { }` DSL handles the entire runtime |
 | Roll your own conversation state machine | Built-in `phases { }` with LLM-driven auto-transitions |
-| Pass state between tools and UI via globals or hacks | Typed `KoogStateStore<S>` flows from tools straight to Compose UI |
+| Pass state between tools and UI via globals or hacks | Typed `KoogStateStore<S>` flows from device tools straight to Compose UI |
 | Build confirmation dialogs per feature | `AutoConfirmationHandler` with `SAFE` / `SENSITIVE` / `CRITICAL` tiers |
 | Reinvent session persistence each project | Drop-in `session-room` module with your own Room DAO |
 | Blank UI bubble while LLM thinks | `responseStream: Flow<String>` emits tokens as they arrive |
 | Raw exceptions surface to UI on failure | Retry with backoff + stuck detection + graceful fallback messages |
 | LLM hallucinated args crash your tool silently | `validateArgs()` blocks bad calls before execution |
 | Multi-agent routing is manual plumbing | `handoff(agentRef)` — one line to delegate to a specialist |
-| Flat phases pollute the graph with internal steps | `subphase { }` encapsulates sequential steps; the graph sees one phase |
-| Independent reads run sequentially | `parallel { branch { } }` fans out concurrent tool calls via Koog's `nodeExecuteMultipleTools(parallelTools = true)` |
+| Background tasks disconnect from agent state | WorkManager tools keep the agent alive while the app is in background |
 | External triggers (push, deep links) need custom routing | `session.resumeAt("phaseName")` — one call from any platform trigger |
 | Duplicate phase configs across agents | `include(phaseTemplate)` and `include(subphaseTemplate)` — define once, reuse anywhere |
+
+---
+
+## The pattern: device instruction → wait → natural language response
+
+Every koog-compose app follows the same loop — and no web framework can replicate it because no web framework has access to device APIs:
+
+```
+Agent issues a device instruction (start GPS, schedule alarm, block screen)
+  → Agent waits (background, foreground, doesn't matter)
+    → User responds in natural language ("I'm back", "I took it", "focus me")
+      → Agent interprets, acts on device state, responds conversationally
+```
+
+Real examples that ship with koog-compose concepts:
+
+| Scenario | Device tools | The magic |
+|---|---|---|
+| **Run coach** | WeatherTool, RouteSafetyTool, HistoricalRunTool, BackgroundTimerTool | "Plan your 5K — it's 18°C, route is clear, last time was 24min. You beat it by 2min — 5:38 pace." |
+| **Focus session** | ScreenBlockTool, PomodoroTimerTool | Agent schedules check-ins during breaks, asks how focus went |
+| **Medicine reminder** | AlarmSchedulerTool (WorkManager) | Agent schedules alarm, confirms when user says "I took it" |
+| **Photo journal** | CameraTool, GalleryPickerTool | User says "add this to today" — agent captures, tags, stores |
+| **Sleep tracking** | AlarmSchedulerTool | Agent schedules wake-time check-in, asks how you slept |
+
+---
+
+## Hero example: Intelligent run coach
+
+You tell the agent "I'm planning a run this afternoon." It doesn't just set a timer — it pulls the weather, checks route safety at that time of day, estimates duration based on your pace history, and reminds you of your last run. When you say "I'm back," it stops everything and gives you a comparison summary.
+
+```kotlin
+@Serializable
+data class RunState(
+    val userName: String,
+    val isRunning: Boolean = false,
+    val plannedDistanceKm: Double = 5.0,
+    val estimatedDurationMs: Long = 0,
+    val weatherSummary: String? = null,
+    val routeSafety: String? = null,
+    val suggestedWarmup: String? = null,
+    val suggestedMeal: String? = null,
+    val lastRunPace: String? = null,
+    val durationMs: Long = 0,
+    val distanceKm: Double = 0.0,
+    val pace: String? = null,
+    val gpsTrace: List<GpsPoint> = emptyList(),
+    val caloriesBurned: Double = 0.0,
+    val postRunMeal: String? = null,
+)
+
+val runCoach = koogCompose<RunState> {
+    provider { ollama(model = "llama3.2") } // on-device, no server
+
+    initialState {
+        RunState(
+            userName = "brian",
+            lastRunPace = "6:12 min/km (5K in 31min)",
+        )
+    }
+
+    phases {
+        phase("plan_run", initial = true) {
+            instructions {
+                """
+                The user wants to plan a run. Before they head out:
+                1. Use [GetWeather] to check current conditions
+                2. Use [CheckRouteSafety] to verify the route is safe at this time
+                3. Use [EstimateDuration] to calculate based on their pace history
+                4. Remind them of their last run
+                5. Present a briefing and ask if they're ready
+                """.trimIndent()
+            }
+            tool(GetWeatherTool(stateStore))
+            tool(CheckRouteSafetyTool(stateStore))
+            tool(EstimateDurationTool(stateStore))
+            tool(ConfirmReadyTool(stateStore))
+        }
+        phase("prep") {
+            instructions {
+                """
+                Before the user heads out:
+                1. Use [SuggestWarmup] to give them 2-3 dynamic stretches
+                   based on today's distance and their injury history
+                2. Use [SuggestPreRunMeal] to recommend what to eat right now
+                   based on time until run, weather, and their goals
+                3. Walk them through a quick warmup if they want
+                4. When they confirm they're warmed up, transition to running
+                """.trimIndent()
+            }
+            tool(SuggestWarmupTool(stateStore))
+            tool(SuggestPreRunMealTool(stateStore))
+        }
+        phase("running") {
+            instructions {
+                """
+                The run is active. A background timer and GPS tracker are running.
+                When the user says "I'm back" or "I'm done," transition to the summary phase.
+                Check in briefly if they haven't said anything in 15 minutes.
+                """.trimIndent()
+            }
+            tool(BackgroundTimerTool())    // WorkManager — survives app going to background
+            tool(LocationTrackerTool(stateStore)) // GPS trace over time
+        }
+        phase("finished") {
+            instructions {
+                """
+                The user has finished their run. You have:
+                - Actual duration, distance, and calories from state
+                - Their planned distance and estimated duration
+                - Their last run's pace for comparison
+                Present a smart summary: how they did vs their plan, vs their last run,
+                and their current pace. Be encouraging but honest if they were slower.
+                Then use [SuggestPostRunMeal] to recommend recovery nutrition.
+                """.trimIndent()
+            }
+            tool(StopTimerTool(stateStore))
+            tool(CalculatePaceTool(stateStore))
+            tool(SuggestPostRunMealTool(stateStore))
+            tool(SaveRunTool(stateStore))
+        }
+    }
+}
+```
+
+The flow:
+
+```
+User: "Planning a 5K this afternoon"
+Agent: [pulls weather] "18°C, partly cloudy — great running weather."
+       [checks route] "Uhuru Park route is clear this time of day."
+       [checks history] "Last time you did 5K in 31 minutes — 6:12 pace.
+                        I'd estimate 29–30 minutes if you keep that rhythm."
+       "Ready to prep?"
+
+User: "Yeah"
+Agent: "Here's your warmup — 3 moves, 5 minutes total:
+        1. Leg swings × 10 each side (loosens hips)
+        2. High knees × 30 seconds (gets heart rate up)
+        3. Walking lunges × 8 each leg (activates glutes)"
+       [suggests meal] "Eat a banana + a spoon of peanut butter now — quick carbs,
+        easy on the stomach. You've got 20 minutes before you head out."
+
+User: "Done warming up, heading out"
+Agent: "Timer started. GPS and accelerometer are recording. See you when you're back!"
+       [runs in background via WorkManager — app can be closed]
+
+[During the run — accelerometer detects sudden stop]
+Agent: "You've been stationary for 2 minutes. Everything okay?"
+
+User: "Yeah, just tying my shoe"
+Agent: "All good — GPS is still recording. Keep going!"
+
+User: "I'm back"
+Agent: [stops timer] "Nice work! 5K in 28:45 — 5:45 pace.
+       You beat your last run by 2:15 and hit your plan 2 minutes early.
+       Fastest split was km 3–4 at 5:28. Burned ~340 calories."
+       [recovery meal] "Grab a protein shake or Greek yogurt with berries within
+        30 minutes — your muscles are primed to absorb it."
+       "Want me to log this run?"
+```
+
+But that's just the run. The agent doesn't sleep when you're not running — it's watching your whole day:
+
+```
+[Afternoon — screen time data shows 8 hours on TikTok]
+Agent: "Quick check-in — you've had TikTok open for 8 hours today.
+        You also have 3 unfinished items on your todo list.
+        Want me to block it for the next 2 hours while you knock those out?"
+
+User: "Yeah, do it"
+Agent: [blocks TikTok via Screen Time API] "Blocked for 2 hours.
+        First up: 'Finish project proposal' — want me to break it into steps?"
+```
+
+No form to fill. No start/stop buttons. No dashboard to check. No app-switching. Just conversation that understands your body, your phone, and your day.
 
 ---
 
@@ -47,10 +223,10 @@ io.github.brianmwas.koog_compose:koog-compose-session-room  ← Room-backed pers
 
 ```kotlin
 dependencies {
-    implementation("io.github.brianmwas.koog_compose:koog-compose-core:0.3.2")
-    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:0.3.2")            // Compose UI components
-    implementation("io.github.brianmwas.koog_compose:koog-compose-device:0.3.2")        // Android/iOS device tools
-    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:0.3.2")  // Persistent memory via Room
+    implementation("io.github.brianmwas.koog_compose:koog-compose-core:1.2.0")
+    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:1.2.0")            // Compose UI components
+    implementation("io.github.brianmwas.koog_compose:koog-compose-device:1.2.0")        // Android/iOS device tools
+    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:1.2.0")  // Persistent memory via Room
 }
 ```
 
@@ -58,7 +234,7 @@ dependencies {
 > ```kotlin
 > maven("https://s01.oss.sonatype.org/content/repositories/snapshots/")
 > ```
-> Then use version `0.3.2-SNAPSHOT`.
+> Then use version `1.2.0-SNAPSHOT`.
 
 ---
 
@@ -66,37 +242,40 @@ dependencies {
 
 ### 1. Define your app state
 
-koog-compose is generic over your app state type. Tools update it, your Compose UI observeses it — no globals, no manual wiring.
+koog-compose is generic over your app state type. Device tools update it, your Compose UI observes it — no globals, no manual wiring.
 
 ```kotlin
-data class AppState(
-    val userId: String,
-    val intent: Intent? = null,
-    val location: Coordinates? = null
+@Serializable
+data class RunState(
+    val userName: String,
+    val isRunning: Boolean = false,
+    val distanceKm: Double = 0.0,
+    val gpsTrace: List<GpsPoint> = emptyList(),
+    val durationMs: Long = 0,
 )
 ```
 
-### 2. Build the context
+### 2. Build the agent
 
 ```kotlin
-val context = koogCompose<AppState> {
-    provider {
-        anthropic(apiKey = "your-key") {
-            model = "claude-3-5-sonnet"
-        }
-    }
+val fitnessAgent = koogCompose<RunState> {
+    provider { ollama(model = "llama3.2") } // on-device, no server needed
 
-    initialState { AppState(userId = currentUserId) }
+    initialState { RunState(userName = "brian") }
 
     phases {
-        phase("greeting", initial = true) {
-            instructions { "Greet the user and offer to check their location." }
+        phase("ready", initial = true) {
+            instructions { "Ask the user if they're ready for their run." }
+            tool(StartRunTimerTool(stateStore))
         }
-        phase("location_check") {
-            instructions { "You now have access to the user's GPS coordinates." }
+        phase("running") {
+            instructions { "The run is active. Check in periodically." }
+            tool(BackgroundTimerTool())    // WorkManager keeps it alive
+            tool(LocationTrackerTool(stateStore))
         }
-        phase("confirm_location") {
-            instructions { "Confirm the detected location with the user." }
+        phase("finished") {
+            instructions { "Summarise their run: duration, distance, pace." }
+            tool(StopTimerTool(stateStore))
         }
     }
 
@@ -107,41 +286,32 @@ val context = koogCompose<AppState> {
         }
         stuckDetection {
             threshold = 3
-            fallbackMessage = "I'm having trouble with that. Let me connect you to support."
+            fallbackMessage = "I'm having trouble tracking your run. Let's try again."
         }
-    }
-
-    events {
-        onAgentStuck { event -> /* navigate to support, log analytics, etc. */ }
-        onTurnFailed { event -> /* show error UI */ }
     }
 }
 ```
 
-### 3. Write a stateful tool
+### 3. Write a device tool
 
 ```kotlin
-class SendMoneyTool(
-    override val stateStore: KoogStateStore<AppState>
-) : StatefulTool<AppState>() {
+class LocationTrackerTool(
+    override val stateStore: KoogStateStore<RunState>
+) : StatefulTool<RunState>() {
 
-    override val name = "SendMoney"
-    override val description = "Send money to a recipient"
-    override val permissionLevel = PermissionLevel.CRITICAL
-
-    override fun validateArgs(args: JsonObject): ValidationResult {
-        val amount = args["amount"]?.toString()?.toDoubleOrNull()
-            ?: return ValidationResult.Invalid("missing or non-numeric field: amount")
-        if (amount <= 0) return ValidationResult.Invalid("amount must be greater than 0")
-        args["recipientId"]
-            ?: return ValidationResult.Invalid("missing required field: recipientId")
-        return ValidationResult.Valid
-    }
+    override val name = "TrackLocation"
+    override val description = "Record GPS coordinates during the run"
+    override val permissionLevel = PermissionLevel.SENSITIVE // location = user confirmation
 
     override suspend fun execute(args: JsonObject): ToolResult {
-        val amount = args["amount"]!!.toString().toDouble()
-        val recipientId = args["recipientId"]!!.toString()
-        return ToolResult.Success("Sent $amount to $recipientId")
+        val location = getCurrentLocation() // Android: FusedLocationProvider, iOS: CLLocation
+        stateStore.update {
+            it.copy(
+                gpsTrace = it.gpsTrace + location,
+                distanceKm = calculateDistance(it.gpsTrace + location)
+            )
+        }
+        return ToolResult.Success("Recorded ${location.latitude}, ${location.longitude}")
     }
 }
 ```
@@ -149,24 +319,22 @@ class SendMoneyTool(
 ### 4. Run it from a ViewModel
 
 ```kotlin
-class ChatViewModel(
-    context: KoogComposeContext<AppState>,
+class RunViewModel(
+    context: KoogComposeContext<RunState>,
     executor: PromptExecutor
 ) : ViewModel() {
 
     val session = PhaseSession(
         context   = context,
         executor  = executor,
-        sessionId = "user_brian",
+        sessionId = "run_brian",
         scope     = viewModelScope
     )
 
     val isRunning      = session.isRunning       // StateFlow<Boolean>
-    val lastResponse   = session.lastResponse    // StateFlow<String?>
     val currentPhase   = session.currentPhase    // StateFlow<String>
     val responseStream = session.responseStream  // Flow<String> — token by token
-    val appState       = session.appState        // StateFlow<AppState>?
-    val error          = session.error           // StateFlow<Throwable?>
+    val runState       = session.appState        // StateFlow<RunState>
 }
 ```
 
@@ -174,17 +342,17 @@ class ChatViewModel(
 
 ```kotlin
 @Composable
-fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
+fun RunScreen(viewModel: RunViewModel = viewModel()) {
     val chatState = rememberChatState(viewModel.session)
-    val snackbarHostState = remember { SnackbarHostState() }
+    val runState by viewModel.runState.collectAsState()
 
-    ConfirmationObserver(
-        chatState = chatState,
-        handler = rememberAutoConfirmationHandler(snackbarHostState)
-    )
+    // State display
+    if (runState.isRunning) {
+        Text("Running — ${runState.distanceKm} km")
+    }
 
+    // Chat UI
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = { ChatInputBar(chatState) }
     ) { padding ->
         ChatMessageList(chatState, modifier = Modifier.padding(padding))
@@ -198,7 +366,7 @@ fun ChatScreen(viewModel: ChatViewModel = viewModel()) {
 val session = PhaseSession(
     context   = context,
     executor  = executor,
-    sessionId = "user_brian",
+    sessionId = "run_brian",
     store     = RoomSessionStore(db.sessionDao()),
     scope     = viewModelScope
 )
@@ -224,57 +392,58 @@ Tool executes
 A `Phase` is a named state in your conversation graph. Each phase carries its own system instructions and tool access. The LLM transitions between phases automatically using generated transition tools — no manual routing code required.
 
 ```
-greeting ──► location_check ──► confirm_location ──► END
+ready ──► running ──► finished ──► END
 ```
 
 ### Subphases — sequential steps inside one phase
 
-When a phase encapsulates multiple sequential steps, use `subphase { }` instead of polluting the top-level graph with internal implementation details. Subphases run in declaration order. Each has its own tool scope and optional typed output. The parent phase's `onCondition` transitions only fire after ALL subphases complete.
+When a phase encapsulates multiple sequential steps, use `subphase { }` instead of polluting the top-level graph with internal implementation details. Subphases run in declaration order. Each has its own tool scope. The parent phase's `onCondition` transitions only fire after ALL subphases complete.
+
+Subphases share data through `stateStore.update { }` — each subphase tool writes its result to the shared state, and the next subphase reads it:
 
 ```kotlin
-phase("checkout", initial = true) {
-    subphase("validate_cart") {
-        instructions { "Verify all items are in stock. Respond ONLY with JSON." }
-        tool(CheckInventoryTool())
-        typedOutput<CartValidation>()
+phase("finish_run") {
+    subphase("stop_timer") {
+        instructions { "Stop the run timer and record final duration." }
+        tool(StopTimerTool(stateStore)) // writes state.durationMs
     }
-    subphase("process_payment") {
-        instructions { "Charge the card. Respond ONLY with JSON." }
-        tool(ChargeCardTool())   // only reachable in this subphase
-        typedOutput<PaymentResult>()
+    subphase("calculate_stats") {
+        instructions { "Calculate distance and pace from the GPS trace." }
+        tool(CalculatePaceTool(stateStore)) // reads state.gpsTrace, writes state.distanceKm
     }
-    subphase("confirm_order") {
-        instructions { "Send order confirmation email." }
-        tool(SendEmailTool())
+    subphase("save_run") {
+        instructions { "Persist the run to local storage." }
+        tool(SaveRunTool(stateStore))
     }
-    onCondition("order complete", "post_purchase")
+    onCondition("run saved", "summary")
 }
-phase("post_purchase") {
-    instructions { "Thank the user and offer tracking." }
+phase("summary") {
+    instructions { "Present the run summary to the user." }
 }
 ```
 
-The phase graph only sees **checkout** → **post_purchase**. The three internal steps are invisible to the router.
+The phase graph only sees **finish_run** → **summary**. The three internal steps are invisible to the router.
+
+> **Note:** `typedOutput<O>()` is only available on **top-level phases**, not subphases. Subphase outputs flow through `stateStore` — the single source of truth for all phase-to-phase communication.
 
 ### Parallel branches — concurrent tool execution
 
 When a phase needs multiple independent operations, use `parallel { branch { } }`. Tools from all branches are collected into a single subgraph that uses Koog's `nodeExecuteMultipleTools(parallelTools = true)` for true concurrent execution. Many LLM providers execute independent tool calls natively in parallel.
 
+Branches write their results to `stateStore.update { }` — design branch tools to write directly:
+
 ```kotlin
 phase("gather_context", initial = true) {
     parallel {
         branch("location") {
-            tool(GeocoderTool())
-            typedOutput<LocationContext>()
+            tool(GeocoderTool(stateStore))      // writes state.locationContext
         }
         branch("device") {
-            tool(LocaleTool())
-            tool(TimezoneTool())
-            typedOutput<DeviceContext>()
+            tool(LocaleTool(stateStore))        // writes state.deviceContext
+            tool(TimezoneTool(stateStore))
         }
         branch("permissions") {
-            tool(PermissionCheckTool())
-            typedOutput<PermissionContext>()
+            tool(PermissionCheckTool(stateStore)) // writes state.permissionContext
         }
     }
     onCondition("context ready", "main")
@@ -289,10 +458,15 @@ Common patterns like "research → summarise" appear in multiple agents. Define 
 
 ```kotlin
 // SharedTemplates.kt
+val researchTemplate = phaseTemplate {
+    instructions { "Search and summarise relevant information." }
+    tool(WebSearchTool(stateStore))
+    typedOutput<ResearchSummary>() // typedOutput is valid on top-level phases
+}
+
 val researchSubphase = subphaseTemplate("research") {
     instructions { "Search and summarise relevant information. Respond ONLY with JSON." }
-    tool(WebSearchTool())
-    typedOutput<ResearchSummary>()
+    tool(WebSearchTool(stateStore)) // writes to stateStore instead of typedOutput
 }
 
 val safetyCheckTemplate = phaseTemplate {
@@ -323,8 +497,7 @@ koogAgent("email_drafter") {
         phase("draft") {
             include(researchSubphase)           // same template, different agent
             subphase("write_email") {
-                tool(EmailDraftTool())
-                typedOutput<EmailDraft>()
+                tool(EmailDraftTool(stateStore)) // writes to stateStore
             }
         }
     }
@@ -339,13 +512,13 @@ Templates are plain Kotlin values — no new DSL machinery. Anything declared af
 
 ```kotlin
 // From a push notification handler:
-session.resumeAt("notify_user", userMessage = "Your order has shipped!")
+session.resumeAt("notify_user", userMessage = "Your run is ready to view!")
 
 // From a deep link — resume without a user message (sentinel, no history pollution):
 session.resumeAt("onboarding_flow")
 
-// From a broadcast receiver:
-session.resumeAt("location_update", userMessage = "You're near a saved place")
+// From a WorkManager callback:
+session.resumeAt("running", userMessage = "Background timer finished")
 ```
 
 When called without a `userMessage`, an internal sentinel is used so nothing pollutes conversation history. If the phase doesn't exist in any registered agent, the error is surfaced on `session.error` as `UnknownPhaseException`. Works on both single-agent (`PhaseSession`) and multi-agent (`SessionRunner`) runtimes.
@@ -355,13 +528,13 @@ When called without a `userMessage`, an internal sentinel is used so nothing pol
 Use `[ToolName]` syntax in phase instructions to inject full tool schemas into the system prompt.
 
 ```kotlin
-phase("payment") {
+phase("running") {
     instructions {
         """
-        Help the user send money.
-        Use [GetBalance] to check funds before sending.
-        Use [SendMoney] to execute the transfer.
-        Always confirm before calling [SendMoney].
+        The user's run is active. Check in periodically.
+        Use [TrackLocation] to record GPS coordinates.
+        Use [BackgroundTimer] to keep the session alive in background.
+        Wait for the user to say they're done.
         """.trimIndent()
     }
 }
@@ -567,21 +740,23 @@ The `:session-room` module provides a ready-made Room implementation.
 
 ```kotlin
 @Test
-fun `location request transitions to location_check phase`() {
+fun `"I'm back" transitions from running to finished phase`() {
     val session = testPhaseSession(context) {
-        on("I need help with my location", phase = "greeting") {
-            transitionTo("location_check")
-            callTool("RecordLocationIntent")
-            respondWith("Sure, fetching location now.")
+        on("I'm back", phase = "running") {
+            transitionTo("finished")
+            callTool("StopTimer")
+            callTool("CalculateStats")
+            respondWith("Great run! 3.2 km in 18 minutes — 5:38 pace.")
         }
     }
 
-    session.send("I need help with my location")
+    session.send("I'm back")
 
-    assertPhase(session, "location_check")
-    assertToolCalled(session, "RecordLocationIntent")
+    assertPhase(session, "finished")
+    assertToolCalled(session, "StopTimer")
     assertState(session) { state ->
-        assertEquals(Intent.LOCATION_REQUEST, state.intent)
+        assertFalse(state.isRunning)
+        assertEquals(3.2, state.distanceKm, 0.1)
     }
 }
 ```
@@ -600,14 +775,14 @@ val session = testPhaseSession(
     context = context,
     confirmationHandler = AutoDenyConfirmationHandler,
 ) {
-    on("Share my location", phase = "greeting") {
-        transitionTo("location_check")
-        callTool("RecordLocationIntent")
-        respondWith("I could not access location.")
+    on("Track my run", phase = "ready") {
+        transitionTo("running")
+        callTool("StartTimer")
+        respondWith("Timer started. I'll track your location in the background.")
     }
 }
-session.send("Share my location")
-assertGuardrailDenied(session, "RecordLocationIntent")
+session.send("Track my run")
+assertGuardrailDenied(session, "StartTimer")
 ```
 
 ### Available test assertions
@@ -716,6 +891,76 @@ val context = koogCompose {
 
 ---
 
+## Schema migration for persisted state
+
+When your app state data class evolves (new fields, renamed properties, removed fields), **old persisted sessions will fail to deserialize** unless you handle migration. koog-compose v1.2.0 includes built-in migration hooks to prevent data loss.
+
+### How it works
+
+`AgentSession` tracks a `serializedStateVersion` alongside the raw JSON `serializedState`. When you upgrade your app state, increment the version and define an upgrade path:
+
+```kotlin
+@Serializable
+data class AppState(
+    val userId: String,
+    val intent: Intent? = null,
+    val location: Coordinates? = null,
+    val themeMode: ThemeMode = ThemeMode.System // ← new field in v2
+)
+
+val stateMigration = object : StateMigration<AppState> {
+    override val schemaVersion: Int = 2
+
+    override suspend fun migrate(
+        json: JsonObject,
+        fromVersion: Int
+    ): JsonObject {
+        return when (fromVersion) {
+            0, 1 -> json + ("themeMode" to JsonPrimitive("System"))
+            else -> json
+        }
+    }
+
+    override fun decodeMigrated(json: JsonObject): AppState {
+        return Json.decodeFromJsonElement(serializer(), json)
+    }
+}
+```
+
+### Using with RoomSessionStore
+
+Pass your serializer and migration to the constructor:
+
+```kotlin
+val sessionStore = RoomSessionStore<AppState>(
+    dao = db.koogSessionDao(),
+    stateSerializer = AppState.serializer(),
+    stateMigration = stateMigration // optional — defaults to lenient parsing
+)
+```
+
+If you omit `stateMigration`, the store falls back to `StateMigration.lenient()` which uses `ignoreUnknownKeys = true` and `coerceInputValues = true` — this survives **added fields with defaults** and **removed fields** but NOT **renamed fields**.
+
+### Using with RedisSessionStore
+
+`RedisSessionStore` serializes the full `AgentSession` as JSON. It already uses `ignoreUnknownKeys = true` and `coerceInputValues = true`, so new fields with defaults and removed fields are handled automatically. For renamed fields, you'll need to migrate the full `AgentSession` JSON before deserialization — implement a custom store or pre-migrate at the Redis level.
+
+### Room database migration
+
+The `:session-room` module includes a Room migration (`v1 → v2`) that adds the `serializedStateVersion` column automatically.
+
+### Quick checklist
+
+| Change | Breaking? | Handled by default? | Needs migration? |
+|---|---|---|---|
+| Add field with default value | No | ✅ Yes (`coerceInputValues`) | No |
+| Add field with nullable type | No | ✅ Yes (`coerceInputValues`) | No |
+| Remove a field | No | ✅ Yes (`ignoreUnknownKeys`) | No |
+| Rename a field | **Yes** | ❌ No | ✅ Yes |
+| Change a field type | **Yes** | ❌ No | ✅ Yes |
+
+---
+
 ## Platform support
 
 | Feature | Android | iOS | Desktop (JVM) |
@@ -734,16 +979,20 @@ val context = koogCompose {
 | Tool call tracking | ✅ | ✅ | ✅ |
 | Audit log redaction | ✅ | ✅ | ✅ |
 | Agent checkpoints (opt-in) | ✅ | ✅ | ✅ |
-| Compose UI | ✅ | ✅ | ✅ |
+| Compose UI (chat, confirmation) | ✅ | ✅ | — |
 | Room session store | ✅ | ✅ | — |
-| Device tools (location) | ✅ | 🔜 v0.4 | — |
+| Device tools (location) | ✅ | — | — |
 | WorkManager background | ✅ | — | — |
+
+> **Note:** `koog-compose-core`, `koog-compose-ui`, and `koog-compose-session-room`
+> all compile for Android and iOS. `koog-compose-device` is Android-only
+> (WorkManager, Play Services Location). Desktop support for UI is planned.
 
 ---
 
 ## Roadmap
 
-### v0.3 (current)
+### v1.2.0 (current)
 - ✅ Structured outputs with validation & self-correction
 - ✅ Schema versioning for evolving output types
 - ✅ Tool call frequency tracking per session
@@ -761,17 +1010,19 @@ val context = koogCompose {
 - ✅ Background task tools via WorkManager (Android)
 - ✅ RoomSessionStore persists `serializedState` and `toolCallCounts`
 - ✅ `KoogRoutine` registers phase tools and transitions
+- ✅ Schema migration utilities — `StateMigration` interface for evolving app state
+- ✅ Lenient deserialization by default (`ignoreUnknownKeys` + `coerceInputValues`)
+- ✅ Room database auto-migration (v1 → v2) for `serializedStateVersion` column
 
-### v0.4
-- **iOS device parity** — `CLLocation` and `PHPicker` tool support
+### v1.3.0
 - **ActivityResult integration** — camera, file picker, permissions as agent tools
 - **Structured observability** — pluggable `EventSink` for Firebase, Datadog, custom backends
 - **Custom PersistenceStorageProvider** — SQLite, Keychain, cloud sync
+- **Desktop Compose UI** — JVM support for `koog-compose-ui`
 
-### v0.5
+### v1.4.0
 - **Screenshot context tool** — give the agent a view of the current screen
 - **Voice slot** — LiveKit-compatible audio input/output in the UI module
-- **Schema migration utilities** — migrate persisted structured outputs across versions
 
 ---
 

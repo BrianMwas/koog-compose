@@ -137,32 +137,29 @@ private fun eventContext(onEvent: (suspend (KoogEvent) -> Unit)? = null): KoogCo
         provider {
             ollama(model = "demo-local")
         }
-    prompt {
-        default { "You are a test assistant." }
-    }
-    phases {
-        phase("browse") {
-            instructions { "Browse products." }
-            onCondition(
-                on = "checkout should begin",
-                targetPhase = "checkout"
-            )
+        prompt {
+            default { "You are a test assistant." }
         }
-        phase("checkout") {
-            instructions { "Process the order carefully." }
-            tool(EventCriticalTool())
+        phases {
+            phase("browse") {
+                instructions { "Browse products." }
+                onCondition(
+                    on = "checkout should begin",
+                    targetPhase = "checkout"
+                )
+            }
+            phase("checkout") {
+                instructions { "Process the order carefully." }
+                tool(EventCriticalTool())
+            }
         }
-    }
-    initialPhase("browse")
-    if (onEvent != null) {
-        events {
-            onEvent(onEvent)
+        initialPhase("browse")
+        if (onEvent != null) {
+            events {
+                onEvent(onEvent)
+            }
         }
-    }
-    config {
-        requireConfirmationForSensitive = true
-    }
-}
+    } as KoogComposeContext<Unit>
 
 private class EventCriticalTool : SecureTool {
     override val name: String = "process_payment"

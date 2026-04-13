@@ -48,5 +48,6 @@ include(":koog-compose-mediapipe")
 // iOS: BackgroundTasks (planned)
 // Desktop: ScheduledExecutorService (planned)
 
-// Sample app to test the library locally
+// Sample apps
 include(":sample-app")
+include(":composeApp")

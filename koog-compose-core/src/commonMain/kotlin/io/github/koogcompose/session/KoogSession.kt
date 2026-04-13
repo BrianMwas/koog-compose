@@ -18,16 +18,20 @@ public data class KoogSession<S>(
     val globalProvider: ProviderConfig,
     val mainAgent: KoogAgentDefinition,
     val agentRegistry: Map<String, KoogAgentDefinition>,
-    val stateStore: KoogStateStore<S>?,
+    override val stateStore: KoogStateStore<S>?,
     val stateSerializer: KSerializer<S>? = null,
     val store: SessionStore = InMemorySessionStore(),
     val config: KoogSessionConfig = KoogSessionConfig(),
     val eventHandlers: EventHandlers = EventHandlers.Empty,
-) {
+) : KoogDefinition<S> {
     public fun resolveProviderFor(agent: KoogAgentDefinition): ProviderConfig =
         agent.provider ?: globalProvider
 
     public fun findAgent(name: String): KoogAgentDefinition? = agentRegistry[name]
+
+    /** Creates a [PromptExecutor] backed by this session's global provider config. */
+    override fun createExecutor(): ai.koog.prompt.executor.model.PromptExecutor =
+        io.github.koogcompose.provider.buildExecutor(globalProvider)
 
     /**
      * Builds a [KoogComposeContext] for [agent].
@@ -111,15 +115,11 @@ public data class KoogSessionConfig(
 
 // ── DSL entry point ───────────────────────────────────────────────────────────
 
-@JvmName("koogSessionTyped")
-public fun <S> koogSession(
+// Unified entry point — type is inferred from the builder context.
+// S : Any? covers both stateless (Unit) and stateful (data class) usage.
+public fun <S : Any?> koogSession(
     block: KoogSessionBuilder<S>.() -> Unit,
 ): KoogSession<S> = KoogSessionBuilder<S>().apply(block).build()
-
-@JvmName("koogSessionUnit")
-public fun koogSession(
-    block: KoogSessionBuilder<Unit>.() -> Unit,
-): KoogSession<Unit> = KoogSessionBuilder<Unit>().apply(block).build()
 
 // ── KoogSessionBuilder ────────────────────────────────────────────────────────
 

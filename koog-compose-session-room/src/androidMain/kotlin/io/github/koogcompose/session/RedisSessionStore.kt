@@ -1,4 +1,4 @@
-package io.github.koogcompose.device.session
+package io.github.koogcompose.session.room
 
 
 import io.github.koogcompose.session.AgentSession
@@ -9,7 +9,7 @@ import kotlinx.coroutines.withContext
 import kotlin.time.Clock
 
 /**
- * Redis-backed [SessionStore] for koog-compose-device.
+ * Redis-backed [SessionStore] for koog-compose.
  *
  * Persists full LLM message history to Redis. Suitable for:
  *  - Server-assisted Android apps that need multi-device session continuity
@@ -37,11 +37,9 @@ import kotlin.time.Clock
  * )
  * ```
  *
- * Dependencies (add to koog-compose-device build.gradle.kts):
+ * Dependencies (already included in koog-compose-session-room:androidMain):
  * ```kotlin
  * implementation("redis.clients:jedis:5.1.0")
- * // or for Lettuce (coroutine-native):
- * // implementation("io.lettuce:lettuce-core:6.3.2.RELEASE")
  * ```
  *
  * NOTE: Network I/O is dispatched on [Dispatchers.IO]. Redis calls are
@@ -50,7 +48,7 @@ import kotlin.time.Clock
  * Lifecycle: Call [close()] when your DI container is destroyed to release
  * the connection pool. No-op if the pool was never initialised.
  */
-class RedisSessionStore(
+public class RedisSessionStore(
     private val host: String,
     private val port: Int = 6379,
     private val password: String? = null,
@@ -59,7 +57,10 @@ class RedisSessionStore(
     private val keyPrefix: String = "koog:session:"
 ) : SessionStore {
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
 
     // Jedis pool — lazily initialised so the store can be created on the main thread
     private var _pool: redis.clients.jedis.JedisPool? = null
@@ -86,7 +87,7 @@ class RedisSessionStore(
             }
         }
 
-    override suspend fun save(sessionId: String, session: AgentSession) =
+    override suspend fun save(sessionId: String, session: AgentSession) {
         withContext(Dispatchers.IO) {
             val now = Clock.System.now().toEpochMilliseconds()
             val serialized = json.encodeToString(
@@ -100,12 +101,13 @@ class RedisSessionStore(
                 }
             }
         }
+    }
 
-    override suspend fun delete(sessionId: String) =
+    override suspend fun delete(sessionId: String) {
         withContext(Dispatchers.IO) {
             pool.resource.use { jedis -> jedis.del(key(sessionId)) }
-            Unit
         }
+    }
 
     override suspend fun exists(sessionId: String): Boolean =
         withContext(Dispatchers.IO) {
@@ -117,7 +119,7 @@ class RedisSessionStore(
      * when the app process is shutting down to release network resources.
      * Safe to call multiple times — subsequent calls are no-ops.
      */
-    fun close() {
+    public fun close() {
         _pool?.close()
         _pool = null
     }

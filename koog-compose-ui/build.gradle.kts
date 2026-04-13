@@ -17,6 +17,8 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
+    iosArm64()
+    iosSimulatorArm64()
     jvm("desktop") {
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
@@ -33,10 +35,11 @@ kotlin {
             implementation(libs.material3.v190)
             implementation(libs.compose.ui)
             implementation(libs.compose.uiToolingPreview)
-            implementation(libs.androidx.lifecycle.viewmodel.compose)
-            implementation(libs.androidx.lifecycle.runtime.compose)
+            // JetBrains multiplatform lifecycle — works on Android, iOS, Desktop
+            implementation("org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
+            implementation("org.jetbrains.androidx.lifecycle:lifecycle-runtime-compose:2.8.0")
             implementation(libs.coil.compose)
-            
+
             // Material Icons for multiplatform
             implementation(compose.materialIconsExtended)
         }

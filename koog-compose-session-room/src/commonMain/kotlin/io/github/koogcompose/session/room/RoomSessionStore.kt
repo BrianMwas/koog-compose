@@ -3,24 +3,59 @@ package io.github.koogcompose.session.room
 import io.github.koogcompose.session.AgentSession
 import io.github.koogcompose.session.SessionMessage
 import io.github.koogcompose.session.SessionStore
+import io.github.koogcompose.session.StateMigration
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 
-public class RoomSessionStore(
-    private val dao: KoogSessionDao
+public class RoomSessionStore<S : Any>(
+    private val dao: KoogSessionDao,
+    private val stateSerializer: kotlinx.serialization.KSerializer<S>,
+    private val stateMigration: StateMigration<S>? = null
 ) : SessionStore {
+
+    private val json = Json {
+        ignoreUnknownKeys = true
+        coerceInputValues = true
+    }
+
+    private val effectiveMigration: StateMigration<S> =
+        stateMigration ?: StateMigration.lenient(stateSerializer)
 
     override suspend fun load(sessionId: String): AgentSession? {
         val sessionEntity = dao.getSession(sessionId) ?: return null
         val messageEntities = dao.getMessages(sessionId)
         val contextVarEntities = dao.getContextVars(sessionId)
 
+        // Migrate serializedState if it exists and a migration is configured
+        val migratedState = sessionEntity.serializedState?.let { rawJson ->
+            val storedVersion = sessionEntity.serializedStateVersion
+            val currentVersion = effectiveMigration.schemaVersion
+
+            if (storedVersion < currentVersion) {
+                val element = Json.parseToJsonElement(rawJson)
+                val jsonObject = element as? JsonObject
+                if (jsonObject != null) {
+                    val migrated = effectiveMigration.migrate(jsonObject, storedVersion)
+                    Json.encodeToJsonElement(migrated).toString()
+                } else {
+                    rawJson // not a JSON object, leave as-is
+                }
+            } else {
+                rawJson
+            }
+        }
+
         return AgentSession(
             sessionId = sessionId,
             currentPhaseName = sessionEntity.currentPhaseName,
             messageHistory = messageEntities.map { it.toSessionMessage() },
-            serializedState = sessionEntity.serializedState,
+            serializedState = migratedState,
+            serializedStateVersion = effectiveMigration.schemaVersion,
             contextVars = contextVarEntities.associate { it.key to it.value },
             toolCallCounts = sessionEntity.toolCallCountsJson
-                ?.let { Json.decodeFromString<Map<String, Int>>(it) }
+                ?.let { json.decodeFromString<Map<String, Int>>(it) }
                 ?: emptyMap(),
             createdAt = sessionEntity.createdAt,
             updatedAt = sessionEntity.updatedAt
@@ -35,6 +70,7 @@ public class RoomSessionStore(
                 sessionId = sessionId,
                 currentPhaseName = session.currentPhaseName,
                 serializedState = session.serializedState,
+                serializedStateVersion = session.serializedStateVersion,
                 toolCallCountsJson = if (session.toolCallCounts.isNotEmpty()) {
                     Json.encodeToString(session.toolCallCounts)
                 } else null,

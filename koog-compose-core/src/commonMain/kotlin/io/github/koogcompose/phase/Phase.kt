@@ -119,17 +119,21 @@ public class PhaseRegistry private constructor(
      * Called once by [PhaseAwareAgent] at build time — not on every turn.
      */
     public fun resolveToolRefs(globalRegistry: ToolRegistry): PhaseRegistry {
-        val resolved = phases.mapValues { (_, phase) ->
+        val resolved = phases.mapValues { (phaseName, phase) ->
             phase.copy(
                 resolvedInstructions = ToolRefResolver.resolve(
                     phase.instructions,
-                    globalRegistry
+                    globalRegistry,
+                    phaseName = phaseName,
+                    strict = true
                 ),
                 subphases = phase.subphases.map { sub ->
                     sub.copy(
                         resolvedInstructions = ToolRefResolver.resolve(
                             sub.instructions,
-                            globalRegistry
+                            globalRegistry,
+                            phaseName = "$phaseName > ${sub.name}",
+                            strict = true
                         )
                     )
                 },
@@ -138,7 +142,9 @@ public class PhaseRegistry private constructor(
                         branch.copy(
                             resolvedInstructions = ToolRefResolver.resolve(
                                 branch.instructions,
-                                globalRegistry
+                                globalRegistry,
+                                phaseName = "$phaseName > parallel > ${branch.name}",
+                                strict = true
                             )
                         )
                     }
@@ -190,7 +196,7 @@ public class PhaseRegistry private constructor(
 // ── Nesting level guard ──────────────────────────────────────────────────────
 
 /** Defines what nesting is allowed in a PhaseBuilder context. */
-internal enum class PhaseBuilderContext {
+public enum class PhaseBuilderContext {
     /** Top-level phase — allows subphase, parallel, and transitions. */
     TopLevel,
     /** Subphase of a phase — no further nesting allowed. */
@@ -200,9 +206,9 @@ internal enum class PhaseBuilderContext {
 }
 
 public class PhaseBuilder internal constructor(
-    private val name: String,
+    internal val name: String,
     private val isInitial: Boolean = false,
-    private val context: PhaseBuilderContext = PhaseBuilderContext.TopLevel,
+    internal val context: PhaseBuilderContext = PhaseBuilderContext.TopLevel,
 ) {
     private var instructions: String = ""
     private val toolRegistryBuilder = ToolRegistry.Builder()
@@ -228,6 +234,24 @@ public class PhaseBuilder internal constructor(
      * Annotate your data class with @LLMDescription on each field —
      * the schema is generated automatically from those annotations.
      *
+     * **Important:** `typedOutput` is only meaningful on **top-level phases**.
+     * Subphases and parallel branches do NOT expose their output to other
+     * subphases or the parent. If you need data to flow between subphases,
+     * use `stateStore.update { }` directly in your tool's `execute()` method:
+     *
+     * ```kotlin
+     * phase("checkout") {
+     *     subphase("validate_cart") {
+     *         // DON'T use typedOutput here — it won't flow to the next subphase.
+     *         tool(CheckInventoryTool(stateStore)) // tool writes to stateStore
+     *     }
+     *     subphase("process_payment") {
+     *         instructions { "Cart validation: ${'$'}{state.cartValidation}" }
+     *         tool(ChargeCardTool(stateStore))
+     *     }
+     * }
+     * ```
+     *
      * @param retries  parse-retry attempts before surfacing an error
      * @param version  schema version for evolving output types
      * @param examples injected into the prompt regardless of provider
@@ -235,7 +259,7 @@ public class PhaseBuilder internal constructor(
      * @param validate optional validation lambda — return [ValidationResult.Invalid]
      *                 to trigger a retry with the error fed back to the LLM
      */
-    public inline fun <reified O> typedOutput(
+    public inline fun <reified O : Any> typedOutput(
         retries: Int = 3,
         version: Int = 1,
         examples: List<O> = emptyList(),
@@ -243,7 +267,8 @@ public class PhaseBuilder internal constructor(
         excludedProperties: Set<String> = emptySet(),
         noinline validate: (O) -> ValidationResult = { ValidationResult.Valid },
     ) {
-        outputStructure = phaseOutput<O>(
+        _assertTopLevel("typedOutput")
+        outputStructure = phaseOutput(
             retries = retries,
             version = version,
             examples = examples,
@@ -251,6 +276,24 @@ public class PhaseBuilder internal constructor(
             excludedProperties = excludedProperties,
             validate = validate,
         )
+    }
+
+    @PublishedApi
+    internal fun _assertTopLevel(fn: String) {
+        require(context == PhaseBuilderContext.TopLevel) {
+            "koog-compose: $fn() is only allowed on top-level phases, " +
+                "not on '$name' (context: $context). " +
+                "Subphases and parallel branches share state via stateStore.update { } — " +
+                "have your tool write results there instead."
+        }
+    }
+
+    @PublishedApi
+    internal fun _typedOutputNoInline(
+        output: PhaseOutput<*>,
+    ) {
+        _assertTopLevel("typedOutput")
+        outputStructure = output
     }
 
     /**

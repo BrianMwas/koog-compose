@@ -60,6 +60,26 @@ public interface SecureTool {
     public val parametersSchema: JsonObject? get() = null
 
     /**
+     * Reference marker for use in phase instruction strings.
+     *
+     * Instead of hard-coding `"[ToolName]"` in your instructions, use
+     * this property so the reference stays in sync with the tool's name:
+     *
+     * ```kotlin
+     * val checkBalance = CheckBalanceTool(stateStore)
+     * phase("payment") {
+     *     instructions { "Use ${checkBalance.ref} to check funds." }
+     *     tool(checkBalance)
+     * }
+     * ```
+     *
+     * Resolved at build time by [ToolRefResolver]. Throws
+     * [UnresolvedToolRefException] if the tool isn't registered.
+     */
+    public val ref: String
+        get() = "[$name]"
+
+    /**
      * Describes the parameters this tool accepts.
      */
     public fun describeParameters(): List<ParameterDescriptor> = emptyList()

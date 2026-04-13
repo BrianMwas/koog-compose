@@ -37,14 +37,15 @@ internal class SessionStoreChatHistoryProvider(
         store.save(
             sessionId,
             AgentSession(
-                sessionId        = sessionId,
-                currentPhaseName = existing?.currentPhaseName ?: "",
-                messageHistory   = sessionMessages,
-                serializedState  = existing?.serializedState,
-                contextVars      = existing?.contextVars ?: emptyMap(),
-                toolCallCounts   = existing?.toolCallCounts ?: emptyMap(),
-                createdAt        = existing?.createdAt ?: now,
-                updatedAt        = now,
+                sessionId              = sessionId,
+                currentPhaseName       = existing?.currentPhaseName ?: "",
+                messageHistory         = sessionMessages,
+                serializedState        = existing?.serializedState,
+                serializedStateVersion = existing?.serializedStateVersion ?: 0,
+                contextVars            = existing?.contextVars ?: emptyMap(),
+                toolCallCounts         = existing?.toolCallCounts ?: emptyMap(),
+                createdAt              = existing?.createdAt ?: now,
+                updatedAt              = now,
             )
         )
     }
