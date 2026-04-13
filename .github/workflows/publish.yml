@@ -45,7 +45,7 @@ jobs:
         continue-on-error: true          # Fixes the ETIMEDOUT issue blocking the build
 
       - name: Run tests
-        run: ./gradlew jvmTest androidUnitTest --no-configuration-cache --stacktrace
+        run: ./gradlew desktopTest --no-configuration-cache --stacktrace
         continue-on-error: false         # We still want to know if tests fail, but see 'publish' job below
 
       - name: Verify iOS compilation
