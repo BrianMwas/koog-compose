@@ -280,10 +280,10 @@ public data class KoogComposeContext<S>(
     val phaseRegistry: PhaseRegistry = PhaseRegistry.Empty,
     val activePhaseName: String? = null,
     val eventHandlers: EventHandlers = EventHandlers.Empty,
-    val stateStore: KoogStateStore<S>?,
+    override val stateStore: KoogStateStore<S>?,
     val config: KoogConfig,
     val contextualInstructions: List<ContextualInstruction> = emptyList(),
-) {
+) : KoogDefinition<S> {
     public fun createProvider(): AIProvider = KoogAIProvider(this)
     public val provider: AIProvider get() = createProvider()
 
@@ -291,7 +291,7 @@ public data class KoogComposeContext<S>(
      * Creates a [PromptExecutor] backed by this context's provider config.
      * Use this when constructing [PhaseSession] outside of the convenience DSL.
      */
-    public fun createExecutor(): ai.koog.prompt.executor.model.PromptExecutor =
+    override fun createExecutor(): ai.koog.prompt.executor.model.PromptExecutor =
         io.github.koogcompose.provider.buildExecutor(providerConfig)
 
     public val activePhase: Phase? get() = activePhaseName?.let { phaseRegistry.resolve(it) }
@@ -437,6 +437,22 @@ public data class KoogComposeContext<S>(
 
 
 
+// ── Shared interface ─────────────────────────────────────────────────────────
+
+/**
+ * Common supertype for both single-agent ([KoogComposeContext]) and
+ * multi-agent ([KoogSession]) definitions.
+ *
+ * Callers never need to pattern-match — `.stateStore` and `.createExecutor()`
+ * work regardless of which variant was built.
+ */
+public interface KoogDefinition<S> {
+    /** Shared typed state store, if `initialState { }` was called. */
+    public val stateStore: KoogStateStore<S>?
+    /** Creates a [PromptExecutor] backed by this definition's provider config. */
+    public fun createExecutor(): ai.koog.prompt.executor.model.PromptExecutor
+}
+
 // ── Unified DSL entry point ───────────────────────────────────────────────────
 
 /**
@@ -471,22 +487,12 @@ public data class KoogComposeContext<S>(
  * }
  * ```
  *
- * @return A [KoogAgentDefinition] that can be used with [PhaseSession] (single-agent)
- *   or [SessionRunner] (multi-agent).
+ * @return A [KoogDefinition] — works with [PhaseSession] (single-agent)
+ *   or [SessionRunner] (multi-agent) without any branching.
  */
 public fun <S : Any?> koogCompose(
     block: UnifiedAgentBuilder<S>.() -> Unit
-): UnifiedAgentResult<S> = UnifiedAgentBuilder<S>().apply(block).build()
-
-/**
- * Sealed result from [koogCompose].
- * - [SingleAgent] — no `main {}` block was used; use with [PhaseSession].
- * - [MultiAgent] — `main {}` block was present; use with [SessionRunner].
- */
-public sealed class UnifiedAgentResult<out S> {
-    public data class SingleAgent<S>(val context: KoogComposeContext<S>) : UnifiedAgentResult<S>()
-    public data class MultiAgent<S>(val session: KoogSession<S>) : UnifiedAgentResult<S>()
-}
+): KoogDefinition<S> = UnifiedAgentBuilder<S>().apply(block).build()
 
 /**
  * Unified builder that supports both single-agent and multi-agent DSLs.
@@ -580,14 +586,14 @@ public class UnifiedAgentBuilder<S> {
 
     // ── Build ─────────────────────────────────────────────────────────────
 
-    public fun build(): UnifiedAgentResult<S> {
+    public fun build(): KoogDefinition<S> {
         val provider = requireNotNull(providerConfig) {
             "koog-compose: provider { } block is required."
         }
 
         return if (mainAgentDefinition != null) {
             // Multi-agent path
-            val session = KoogSession(
+            KoogSession(
                 globalProvider = provider,
                 mainAgent = mainAgentDefinition!!,
                 agentRegistry = specialists.toMap(),
@@ -597,10 +603,9 @@ public class UnifiedAgentBuilder<S> {
                 config = sessionConfig,
                 eventHandlers = eventHandlers,
             )
-            UnifiedAgentResult.MultiAgent(session)
         } else {
             // Single-agent path
-            val context = KoogComposeContext(
+            KoogComposeContext(
                 providerConfig = provider,
                 promptStack = promptStack,
                 toolRegistry = toolRegistry,
@@ -611,43 +616,6 @@ public class UnifiedAgentBuilder<S> {
                 config = config,
                 contextualInstructions = contextualInstructions,
             )
-            UnifiedAgentResult.SingleAgent(context)
         }
     }
-}
-
-// ── Convenience accessors ─────────────────────────────────────────────────────
-
-/** Extract the [KoogComposeContext] from a single-agent result. Throws if multi-agent. */
-public val <S> UnifiedAgentResult<S>.context: KoogComposeContext<S>
-    get() = (this as? UnifiedAgentResult.SingleAgent)?.context
-        ?: error("koogCompose was called with main { } — use .session instead.")
-
-/** Extract the [KoogSession] from a multi-agent result. Throws if single-agent. */
-public val <S> UnifiedAgentResult<S>.session: KoogSession<S>
-    get() = (this as? UnifiedAgentResult.MultiAgent)?.session
-        ?: error("koogCompose was called without main { } — use .context instead.")
-
-// ── Unified accessors (work on both single-agent and multi-agent) ─────────────
-
-/**
- * Shared state store, if [initialState { }] was called.
- * Available on both single-agent and multi-agent results.
- */
-public val <S : Any?> UnifiedAgentResult<S>.stateStore: KoogStateStore<S>?
-    get() = when (this) {
-        is UnifiedAgentResult.SingleAgent -> context.stateStore
-        is UnifiedAgentResult.MultiAgent -> session.stateStore
-    }
-
-/**
- * Creates a [PromptExecutor] for this agent/session.
- * Available on both single-agent and multi-agent results.
- */
-public fun <S : Any?> UnifiedAgentResult<S>.createExecutor(): ai.koog.prompt.executor.model.PromptExecutor {
-    val provider = when (this) {
-        is UnifiedAgentResult.SingleAgent -> context.providerConfig
-        is UnifiedAgentResult.MultiAgent -> session.globalProvider
-    }
-    return io.github.koogcompose.provider.buildExecutor(provider)
 }

@@ -19,11 +19,11 @@ import kotlinx.coroutines.launch
  * Works on Android, iOS, and Desktop — no platform code needed.
  */
 class DemoViewModel(
-    agentResult: UnifiedAgentResult<AppState>,
+    agentDef: KoogDefinition<AppState>,
     executor: ai.koog.prompt.executor.model.PromptExecutor,
 ) : ViewModel() {
 
-    private val context: KoogComposeContext<AppState> = agentResult.context
+    private val context: KoogComposeContext<AppState> = agentDef as KoogComposeContext<AppState>
 
     val session = PhaseSession(
         context = context,

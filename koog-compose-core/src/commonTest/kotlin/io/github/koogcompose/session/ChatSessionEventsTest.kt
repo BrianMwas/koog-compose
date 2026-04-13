@@ -159,7 +159,7 @@ private fun eventContext(onEvent: (suspend (KoogEvent) -> Unit)? = null): KoogCo
                 onEvent(onEvent)
             }
         }
-    }.context
+    } as KoogComposeContext<Unit>
 
 private class EventCriticalTool : SecureTool {
     override val name: String = "process_payment"

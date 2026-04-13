@@ -57,7 +57,7 @@ class TrackTopicTool(
  * val session = PhaseSession(context, executor, "my_session", scope = viewModelScope)
  * ```
  */
-fun buildDemoContext(): UnifiedAgentResult<AppState> {
+fun buildDemoContext(): KoogDefinition<AppState> {
     val greetTool = GreetUserTool(KoogStateStore(AppState()))
     val trackTool = TrackTopicTool(KoogStateStore(AppState()))
 
@@ -101,12 +101,11 @@ fun buildDemoContext(): UnifiedAgentResult<AppState> {
     }
 
     // Single-agent result — extract the context
-    val context = result.context
+    val context = result as KoogComposeContext<AppState>
     val stateStore = checkNotNull(context.stateStore)
 
-    // Register tools with the actual stateStore and return wrapped result
-    val enrichedContext = context
+    // Register tools with the actual stateStore and return enriched context
+    return context
         .withTool(GreetUserTool(stateStore))
         .withTool(TrackTopicTool(stateStore))
-    return UnifiedAgentResult.SingleAgent(enrichedContext)
 }
