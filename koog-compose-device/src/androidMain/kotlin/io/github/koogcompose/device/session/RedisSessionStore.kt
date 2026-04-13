@@ -50,7 +50,7 @@ import kotlin.time.Clock
  * Lifecycle: Call [close()] when your DI container is destroyed to release
  * the connection pool. No-op if the pool was never initialised.
  */
-class RedisSessionStore(
+public class RedisSessionStore(
     private val host: String,
     private val port: Int = 6379,
     private val password: String? = null,
@@ -89,7 +89,7 @@ class RedisSessionStore(
             }
         }
 
-    override suspend fun save(sessionId: String, session: AgentSession) =
+    override suspend fun save(sessionId: String, session: AgentSession) {
         withContext(Dispatchers.IO) {
             val now = Clock.System.now().toEpochMilliseconds()
             val serialized = json.encodeToString(
@@ -103,12 +103,13 @@ class RedisSessionStore(
                 }
             }
         }
+    }
 
-    override suspend fun delete(sessionId: String) =
+    override suspend fun delete(sessionId: String) {
         withContext(Dispatchers.IO) {
             pool.resource.use { jedis -> jedis.del(key(sessionId)) }
-            Unit
         }
+    }
 
     override suspend fun exists(sessionId: String): Boolean =
         withContext(Dispatchers.IO) {
@@ -120,7 +121,7 @@ class RedisSessionStore(
      * when the app process is shutting down to release network resources.
      * Safe to call multiple times — subsequent calls are no-ops.
      */
-    fun close() {
+    public fun close() {
         _pool?.close()
         _pool = null
     }

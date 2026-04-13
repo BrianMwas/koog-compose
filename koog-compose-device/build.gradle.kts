@@ -15,6 +15,8 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
+    iosArm64()
+    iosSimulatorArm64()
 
     sourceSets {
         commonMain.dependencies {
@@ -32,6 +34,7 @@ kotlin {
                 implementation(libs.play.services.location)
                 implementation(libs.androidx.core.ktx)
                 implementation(libs.androidx.work.runtime.ktx)
+                implementation("redis.clients:jedis:5.1.0")
             }
         }
     }

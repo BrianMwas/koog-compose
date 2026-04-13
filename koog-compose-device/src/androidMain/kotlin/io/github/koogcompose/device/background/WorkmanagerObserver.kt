@@ -46,9 +46,9 @@ public class WorkManagerObserver(
 
         val liveData = workManager.getWorkInfosForUniqueWorkLiveData(jobId)
 
-        observer = Observer { workInfoList ->
-            val info = workInfoList.firstOrNull() ?: return@Observer
-            val status = info.state.toStatusString()
+        observer = Observer<List<WorkInfo>> { workInfoList ->
+            val info: WorkInfo = workInfoList.firstOrNull() ?: return@Observer
+            val status: String = info.state.toStatusString()
 
             scope.launch {
                 eventBus.dispatch(

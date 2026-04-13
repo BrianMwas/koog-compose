@@ -258,7 +258,7 @@ private fun toolContext(tool: SecureTool): KoogComposeContext<Unit> = koogCompos
     config {
         requireConfirmationForSensitive = true
     }
-}
+}.context
 
 private fun phaseContext(checkoutTool: SecureTool): KoogComposeContext<Unit> = koogCompose<Unit> {
     provider {
@@ -284,7 +284,7 @@ private fun phaseContext(checkoutTool: SecureTool): KoogComposeContext<Unit> = k
     config {
         requireConfirmationForSensitive = true
     }
-}
+}.context
 
 private class DemoSensitiveTool : SecureTool {
     override val name: String = "demo_location"

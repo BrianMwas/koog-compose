@@ -1,5 +1,7 @@
 package io.github.koogcompose.tool
 
+import kotlin.jvm.JvmInline
+
 
 /**
  * Resolves [ToolName] placeholders in instruction strings to their full schema.
@@ -32,22 +34,126 @@ package io.github.koogcompose.tool
 public object ToolRefResolver {
 
     private val TOOL_REF_REGEX = Regex("""\[([A-Za-z][A-Za-z0-9_]*)]""")
+    private val TYPED_TOOL_REF_REGEX = Regex("""«tool-ref:([A-Za-z][A-Za-z0-9_.]*)»""")
 
     /**
-     * Resolves all [ToolName] references in [instructions] against [registry].
+     * Resolves all `[ToolName]` and `«tool-ref:T»` references in [instructions]
+     * against [registry].
      *
-     * References to tools not found in the registry are left as-is with a
-     * warning suffix so you catch mismatches at dev time.
+     * **Throws [UnresolvedToolRefException]** if any reference cannot be resolved.
+     * This is a build-time failure — no silent warnings.
+     *
+     * @param phaseName Optional phase name for better error messages.
+     * @param strict When false, unresolved refs get a warning suffix instead of throwing.
      */
-    public fun resolve(instructions: String, registry: ToolRegistry): String {
-        return TOOL_REF_REGEX.replace(instructions) { match ->
+    public fun resolve(
+        instructions: String,
+        registry: ToolRegistry,
+        phaseName: String? = null,
+        strict: Boolean = true
+    ): String {
+        val unresolved = mutableListOf<String>()
+
+        // First pass: resolve typed refs «tool-ref:T»
+        var result = TYPED_TOOL_REF_REGEX.replace(instructions) { match ->
+            val typeName = match.groupValues[1]
+            val tool = registry.findBySimpleName(typeName)
+            if (tool != null) {
+                tool.toInlineSchema()
+            } else {
+                unresolved.add(typeName)
+                if (strict) match.value else "[${typeName} ⚠ not registered]"
+            }
+        }
+
+        // Second pass: resolve string refs [ToolName]
+        result = TOOL_REF_REGEX.replace(result) { match ->
             val toolName = match.groupValues[1]
             val tool = registry.findBySimpleName(toolName)
-            tool?.toInlineSchema() ?: // Leave as-is but flag so devs notice the broken ref
-            "[${toolName} ⚠ not registered]"
+            if (tool != null) {
+                tool.toInlineSchema()
+            } else {
+                unresolved.add(toolName)
+                if (strict) match.value else "[${toolName} ⚠ not registered]"
+            }
         }
+
+        if (strict && unresolved.isNotEmpty()) {
+            val location = phaseName?.let { " in phase \"$it\"" } ?: ""
+            val registered = registry.all.map { it.name }.joinToString(", ")
+            throw UnresolvedToolRefException(
+                unresolvedRefs = unresolved,
+                phaseName = phaseName,
+                message = "Unresolved tool reference(s)$location: ${unresolved.joinToString(", ")}. " +
+                    "Registered tools: [$registered]"
+            )
+        }
+
+        return result
+    }
+
+    /**
+     * Validates all tool references in [instructions] without expanding them.
+     * Returns a list of unresolved tool names, or empty list if all resolve.
+     */
+    public fun validate(
+        instructions: String,
+        registry: ToolRegistry
+    ): List<String> {
+        val unresolved = mutableListOf<String>()
+        TOOL_REF_REGEX.findAll(instructions).forEach { match ->
+            val toolName = match.groupValues[1]
+            if (registry.findBySimpleName(toolName) == null) {
+                unresolved.add(toolName)
+            }
+        }
+        TYPED_TOOL_REF_REGEX.findAll(instructions).forEach { match ->
+            val typeName = match.groupValues[1]
+            if (registry.findBySimpleName(typeName) == null) {
+                unresolved.add(typeName)
+            }
+        }
+        return unresolved
     }
 }
+
+/**
+ * Thrown when a `[ToolName]` or `«tool-ref:T»` reference cannot be resolved
+ * against the effective tool registry.
+ *
+ * This is a **build-time failure** — it prevents the app from compiling
+ * with broken tool references.
+ */
+public class UnresolvedToolRefException(
+    public val unresolvedRefs: List<String>,
+    public val phaseName: String?,
+    message: String
+) : IllegalArgumentException(message)
+
+/**
+ * Type-safe tool reference for use in phase instruction strings.
+ *
+ * Instead of relying on string-based `[ToolName]` syntax (which has no
+ * compiler support), use `toolRef<T>()` for compile-time safety:
+ *
+ * ```kotlin
+ * phase("payment") {
+ *     instructions {
+ *         "Use ${toolRef<GetBalanceTool>()} to check funds before ${toolRef<SendMoneyTool>()}."
+ *     }
+ *     tool(GetBalanceTool())
+ *     tool(SendMoneyTool())
+ * }
+ * ```
+ *
+ * - **Compile-time error** if `T` isn't a subtype of [SecureTool]
+ * - **Build-time error** if the tool isn't registered in the phase (via [ToolRefResolver.resolve])
+ *
+ * @param T The tool type — must be a subtype of [SecureTool].
+ * @return A marker string that [ToolRefResolver] expands to the tool's inline schema.
+ */
+public inline fun <reified T : SecureTool> toolRef(): String =
+    "«tool-ref:${T::class.simpleName ?: error("toolRef requires a named class")}»"
 
 /**
  * Looks up a tool by its simple class name (e.g. "GetBalance" matches a tool

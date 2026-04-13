@@ -193,7 +193,10 @@ internal class KoogAIProvider<S>(
     }
 }
 
-internal fun buildExecutor(config: ProviderConfig): PromptExecutor {
+/**
+ * Creates a [PromptExecutor] for the given provider configuration.
+ */
+public fun buildExecutor(config: ProviderConfig): PromptExecutor {
     val base: PromptExecutor = when (config) {
         is ProviderConfig.Router -> MultiLLMPromptExecutor(
             config.providers.map(::buildClientForProvider)

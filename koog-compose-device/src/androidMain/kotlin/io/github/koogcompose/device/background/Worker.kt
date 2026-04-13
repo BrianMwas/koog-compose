@@ -30,17 +30,17 @@ import androidx.work.WorkerParameters
  * [WorkManagerObserver], not from inside [doWork], so this class stays
  * focused purely on the work itself.
  */
-abstract class KoogCoroutineWorker(
+public abstract class KoogCoroutineWorker(
     appContext: Context,
     params: WorkerParameters,
 ) : CoroutineWorker(appContext, params) {
 
     /** The stable job identifier supplied at [BackgroundJobProvider.enqueue]. */
-    protected val jobId: String
+    public val jobId: String
         get() = inputData.getString(KEY_JOB_ID)
             ?: error("KoogCoroutineWorker requires KEY_JOB_ID in inputData")
 
-    companion object {
-        const val KEY_JOB_ID = "koog_job_id"
+    public companion object {
+        public const val KEY_JOB_ID: String = "koog_job_id"
     }
 }

@@ -325,10 +325,12 @@ private fun AudioAttachment(
 private fun formatFileSize(bytes: Long): String = when {
     bytes < 1_024L     -> "$bytes B"
     bytes < 1_048_576L -> "${bytes / 1_024} KB"
-    else               -> "%.1f MB".format(bytes / 1_048_576.0)
+    else               -> "${(bytes / 1_048_576.0).toString().take(4)} MB"
 }
 
 private fun formatDuration(ms: Long): String {
     val totalSeconds = ms / 1_000
-    return "%d:%02d".format(totalSeconds / 60, totalSeconds % 60)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    return "${minutes}:${seconds.toString().padStart(2, '0')}"
 }
