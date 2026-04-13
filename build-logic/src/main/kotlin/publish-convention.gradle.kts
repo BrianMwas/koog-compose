@@ -67,8 +67,8 @@ publishing {
 
     repositories {
         maven {
-            name = "sonatype"
-            // Publishes to the new Central Portal staging API
+            name = "sonatypePublish"
+            // Publishes to the staging deployment URL (nexus plugin manages close/release)
             val releasesUrl = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
             val snapshotsUrl = uri("https://s01.oss.sonatype.org/content/repositories/snapshots/")
             url = if (VERSION_NAME.endsWith("SNAPSHOT")) snapshotsUrl else releasesUrl
