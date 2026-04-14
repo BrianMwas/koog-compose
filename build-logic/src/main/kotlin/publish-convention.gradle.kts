@@ -1,5 +1,15 @@
 import org.gradle.kotlin.dsl.*
 
+// ── GPG signing: convert env vars to Gradle project properties ─────────────────
+val signingKey = providers.environmentVariable("GPG_SIGNING_KEY").orNull
+val signingPassword = providers.environmentVariable("GPG_SIGNING_PASSWORD").orNull
+
+if (signingKey != null && signingPassword != null) {
+    // Set as project properties so the Gradle signing plugin picks them up
+    project.extensions.extraProperties.set("signingInMemoryKey", signingKey)
+    project.extensions.extraProperties.set("signingInMemoryKeyPassword", signingPassword)
+}
+
 // ── Coordinates must be set BEFORE applying vanniktech plugin ──────────────────
 val GROUP: String by project
 val VERSION_NAME: String by project
@@ -14,7 +24,6 @@ apply(plugin = "com.vanniktech.maven.publish")
 apply(plugin = "org.jetbrains.dokka")
 
 configure<com.vanniktech.maven.publish.MavenPublishBaseExtension> {
-    // Uses Central Portal by default in v0.34.0+
     publishToMavenCentral()
     signAllPublications()
     pom {
