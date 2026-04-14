@@ -85,7 +85,7 @@ jobs:
           GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
           GPG_SIGNING_PASSWORD: ${{ secrets.GPG_SIGNING_PASSWORD }}
         run: |
-          ./gradlew publishToSonatype closeAndReleaseSonatypeStagingRepository \
+          ./gradlew publishAndReleaseToMavenCentral \
             -PVERSION_NAME=$VERSION_NAME \
             --no-configuration-cache \
             --stacktrace

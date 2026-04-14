@@ -4,9 +4,11 @@ plugins {
 }
 
 dependencies {
-    // Gives the convention plugin access to the Gradle Kotlin DSL types
     compileOnly(gradleApi())
-    
+
+    // Vanniktech Maven Publish plugin — api for types in convention plugin + runtime
+    api("com.vanniktech:gradle-maven-publish-plugin:0.34.0")
+
     // Dokka classes for convention plugin
-    compileOnly("org.jetbrains.dokka:dokka-gradle-plugin:1.9.20")
+    api("org.jetbrains.dokka:dokka-gradle-plugin:1.9.20")
 }
