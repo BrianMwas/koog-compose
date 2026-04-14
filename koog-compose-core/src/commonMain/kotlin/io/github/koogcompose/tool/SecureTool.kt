@@ -28,12 +28,40 @@ public enum class PermissionLevel {
 }
 
 /**
+ * Hints for error recovery that guide the agent's next action.
+ * Carries metadata about transient vs. permanent failures and user actions needed.
+ */
+public sealed class RecoveryHint {
+    /** No special recovery needed — treat as a permanent failure. */
+    public object None : RecoveryHint()
+
+    /** Transient failure — safe to retry after a delay (backoff strategy applied). */
+    public object RetryAfterDelay : RecoveryHint()
+
+    /** User action required before retry — ask the user for confirmation or input. */
+    public data class RequiresUserAction(val prompt: String) : RecoveryHint()
+
+    /** Fall back to a degraded mode or default value instead of failing. */
+    public data class DegradedFallback(val fallbackValue: String) : RecoveryHint()
+}
+
+/**
  * The result of a tool execution.
+ * Extended with recovery hints to enable sophisticated error handling and agent recovery.
  */
 public sealed class ToolResult {
     public data class Success(val output: String) : ToolResult()
-    public data class Denied(val reason: String = "User denied permission") : ToolResult()
-    public data class Failure(val message: String) : ToolResult()
+
+    public data class Denied(
+        val reason: String = "User denied permission",
+        val recoveryHint: RecoveryHint = RecoveryHint.None,
+    ) : ToolResult()
+
+    public data class Failure(
+        val message: String,
+        val retryable: Boolean = false,
+        val recoveryHint: RecoveryHint = RecoveryHint.None,
+    ) : ToolResult()
 
     /** NEW — typed structured result. */
     public data class Structured<T>(

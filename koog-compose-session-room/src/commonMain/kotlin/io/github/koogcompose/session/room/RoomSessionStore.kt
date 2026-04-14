@@ -8,6 +8,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.SerializationException
 
 public class RoomSessionStore<S : Any>(
     private val dao: KoogSessionDao,
@@ -101,6 +102,31 @@ public class RoomSessionStore<S : Any>(
     override suspend fun exists(sessionId: String): Boolean =
         dao.sessionExists(sessionId) > 0
 
+    /**
+     * Loads a session, handling corrupted JSON gracefully.
+     * If the session state is corrupted and cannot be deserialized,
+     * deletes the corrupted entry and returns a recovery result.
+     *
+     * @param sessionId The session to load
+     * @return [SessionLoadResult] indicating success, not found, or recovery
+     */
+    public suspend fun loadOrRecover(sessionId: String): SessionLoadResult {
+        return try {
+            val session = load(sessionId)
+            if (session == null) {
+                SessionLoadResult.NotFound
+            } else {
+                SessionLoadResult.Success(session)
+            }
+        } catch (e: SerializationException) {
+            // State JSON is corrupted — delete and recover
+            delete(sessionId)
+            SessionLoadResult.Recovered(
+                reason = "Your previous session couldn't be restored due to corrupted data. Starting fresh."
+            )
+        }
+    }
+
     // ── Mapping helpers ───────────────────────────────────────────────────────
 
     private fun MessageEntity.toSessionMessage() = SessionMessage(
@@ -121,4 +147,22 @@ public class RoomSessionStore<S : Any>(
         toolName = toolName,
         toolCallId = toolCallId
     )
+}
+
+/**
+ * Result of [RoomSessionStore.loadOrRecover] indicating session load outcome.
+ */
+public sealed class SessionLoadResult {
+    /** Session doesn't exist in the database. */
+    public object NotFound : SessionLoadResult()
+
+    /** Session successfully loaded and deserialized. */
+    public data class Success(val session: AgentSession) : SessionLoadResult()
+
+    /**
+     * Session was corrupted but recovered gracefully.
+     * The corrupted entry has been deleted from the database.
+     * @param reason User-friendly message explaining what happened.
+     */
+    public data class Recovered(val reason: String) : SessionLoadResult()
 }
