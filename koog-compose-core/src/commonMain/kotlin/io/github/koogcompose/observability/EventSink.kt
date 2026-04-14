@@ -25,5 +25,7 @@ public object PrintlnEventSink : EventSink {
  * or in tests where you don't want console noise.
  */
 public object NoOpEventSink : EventSink {
-    override suspend fun emit(event: AgentEvent) = Unit
+    override suspend fun emit(event: AgentEvent) {
+        // No-op
+    }
 }

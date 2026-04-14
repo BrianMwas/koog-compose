@@ -10,7 +10,7 @@ import kotlinx.serialization.json.JsonObject
  * Use them to route to Firebase, Datadog, local logs, or any custom backend.
  */
 public sealed class AgentEvent {
-    abstract val timestampMs: Long
+    public abstract val timestampMs: Long
 
     public data class SessionStarted(
         val sessionId: String,

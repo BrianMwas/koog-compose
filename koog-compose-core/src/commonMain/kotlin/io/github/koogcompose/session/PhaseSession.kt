@@ -382,6 +382,7 @@ public class PhaseSession<S>(
                         )
                     )
                 }
+            }
             else -> Unit
         }
     }
