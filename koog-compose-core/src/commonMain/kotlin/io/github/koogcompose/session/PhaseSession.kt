@@ -4,6 +4,7 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.model.PromptExecutor
 import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.KoogEvent
+import io.github.koogcompose.observability.AgentEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +52,9 @@ public class PhaseSession<S>(
     private val strategyName: String = "koog-compose-phases",
     private val eventHandlers: EventHandlers = EventHandlers.Empty,
 ) : KoogSessionHandle {
+
+    // ── New — pull sink from config so callers don't need to pass it ──────
+    private val eventSink = context.config.eventSink
 
     // ── Activity state ─────────────────────────────────────────────────────
 
@@ -121,6 +125,16 @@ public class PhaseSession<S>(
             _error.value = null
             _turnId.value += 1
 
+            // ── New — Emit SessionStarted on first turn ────────────────────
+            if (_turnId.value == 1) {
+                eventSink.emit(
+                    AgentEvent.SessionStarted(
+                        sessionId    = sessionId,
+                        initialPhase = _currentPhase.value,
+                    )
+                )
+            }
+
             // ── Stuck detection ────────────────────────────────────────────
             val stuckConfig = context.config.stuckDetection
             if (stuckConfig != null) {
@@ -143,6 +157,15 @@ public class PhaseSession<S>(
                             timestampMs      = Clock.System.now().toEpochMilliseconds(),
                             turnId           = _turnId.value.toString(),
                             phaseName        = _currentPhase.value,
+                            consecutiveCount = stuckConfig.threshold,
+                            fallbackMessage  = stuckConfig.fallbackMessage,
+                        )
+                    )
+                    // ── New — Emit AgentStuck event ────────────────────────
+                    eventSink.emit(
+                        AgentEvent.AgentStuck(
+                            sessionId        = sessionId,
+                            phase            = _currentPhase.value,
                             consecutiveCount = stuckConfig.threshold,
                             fallbackMessage  = stuckConfig.fallbackMessage,
                         )
@@ -204,6 +227,15 @@ public class PhaseSession<S>(
                         phaseName   = _currentPhase.value,
                         message     = lastError!!.message
                             ?: "Unknown error after ${retryPolicy.maxAttempts} attempts",
+                    )
+                )
+                // ── New — Emit TurnFailed event ────────────────────────────
+                eventSink.emit(
+                    AgentEvent.TurnFailed(
+                        sessionId = sessionId,
+                        phase     = _currentPhase.value,
+                        turnId    = _turnId.value.toString(),
+                        message   = lastError!!.message ?: "Unknown error after ${retryPolicy.maxAttempts} attempts",
                     )
                 )
             }
@@ -338,8 +370,18 @@ public class PhaseSession<S>(
                 }
             }
             is KoogEvent.PhaseTransitioned -> {
+                val previousPhase = _currentPhase.value
                 _currentPhase.value = event.toPhaseName
-            }
+                // ── New — Emit PhaseTransitioned event ──────────────────────
+                scope.launch {
+                    eventSink.emit(
+                        AgentEvent.PhaseTransitioned(
+                            sessionId = sessionId,
+                            from      = previousPhase,
+                            to        = event.toPhaseName,
+                        )
+                    )
+                }
             else -> Unit
         }
     }
