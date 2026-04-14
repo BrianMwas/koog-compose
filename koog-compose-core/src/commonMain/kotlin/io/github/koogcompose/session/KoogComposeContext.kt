@@ -1,6 +1,8 @@
 package io.github.koogcompose.session
 
 import io.github.koogcompose.event.EventHandlers
+import io.github.koogcompose.observability.EventSink
+import io.github.koogcompose.observability.NoOpEventSink
 import io.github.koogcompose.phase.Phase
 import io.github.koogcompose.phase.PhaseRegistry
 import io.github.koogcompose.phase.toTool
@@ -147,7 +149,8 @@ public data class KoogConfig(
     val structureFixingRetries: Int = 3,
     val maxAgentIterations: Int = 15,
     val guardrails: Guardrails = Guardrails.Default,
-    val stuckDetection: StuckDetectionConfig? = null
+    val stuckDetection: StuckDetectionConfig? = null,
+    val eventSink: EventSink = NoOpEventSink,
 ) {
 
 
@@ -160,6 +163,7 @@ public data class KoogConfig(
         public var structureFixingRetries: Int = 3
         private var stuckDetection: StuckDetectionConfig? = null
         public var maxAgentIterations: Int = 10
+        public var eventSink: EventSink = NoOpEventSink
 
         private var historyCompression: HistoryCompressionConfig? = null
         private var retryPolicy: RetryPolicy = RetryPolicy()
@@ -201,7 +205,8 @@ public data class KoogConfig(
             responseCache = responseCache,
             maxAgentIterations = maxAgentIterations,
             guardrails = guardrails,
-            stuckDetection = stuckDetection
+            stuckDetection = stuckDetection,
+            eventSink = eventSink,
         )
     }
 

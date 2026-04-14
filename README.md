@@ -291,6 +291,83 @@ val session = koogSession<Unit> {
 }
 ```
 
+### Observability & event tracking
+
+Route structured lifecycle events to Firebase, Datadog, a local database, or any custom backend. Events capture every significant moment: session starts, phase transitions, tool calls, guardrails denying access, stuck detection, and failures.
+
+```kotlin
+config {
+    eventSink = PrintlnEventSink          // dev: logs to console
+    // or
+    eventSink = FirebaseEventSink()       // prod: Firebase Analytics
+    // or
+    eventSink = NoOpEventSink             // tests: silent
+}
+```
+
+Events emitted at runtime:
+
+| Event | When | Use case |
+|---|---|---|
+| `SessionStarted` | First user message | Session analytics, trace IDs |
+| `PhaseTransitioned` | LLM routes to a new phase | Funnel analysis, flow tracing |
+| `ToolCalled` | Tool executes successfully | Usage metrics, feature adoption |
+| `GuardrailDenied` | Tool blocked by rate limit, allowlist, or user refusal | Security/compliance audit, UX friction |
+| `AgentStuck` | LLM repeats the same phase N times | Loop detection, fallback messaging |
+| `TurnFailed` | Retry exhausted after N attempts | Error rates, provider reliability |
+| `LLMRequested` | (Reserved for future use) | — |
+
+Implement a custom sink by extending `EventSink`:
+
+```kotlin
+class FirebaseEventSink(private val analytics: FirebaseAnalytics) : EventSink {
+    override suspend fun emit(event: AgentEvent) {
+        val bundle = when (event) {
+            is AgentEvent.SessionStarted -> Bundle().apply {
+                putString("initialPhase", event.initialPhase)
+            }
+            is AgentEvent.ToolCalled -> Bundle().apply {
+                putString("toolName", event.toolName)
+                putString("result", event.result.toString())
+            }
+            is AgentEvent.PhaseTransitioned -> Bundle().apply {
+                putString("from", event.from)
+                putString("to", event.to)
+            }
+            is AgentEvent.GuardrailDenied -> Bundle().apply {
+                putString("reason", event.reason)
+                putString("toolName", event.toolName)
+            }
+            is AgentEvent.AgentStuck -> Bundle().apply {
+                putInt("consecutiveCount", event.consecutiveCount)
+                putString("fallback", event.fallbackMessage)
+            }
+            is AgentEvent.TurnFailed -> Bundle().apply {
+                putString("errorMessage", event.message)
+                putString("phase", event.phase)
+            }
+            else -> Bundle()
+        }
+        analytics.logEvent(event::class.simpleName ?: "AgentEvent", bundle)
+    }
+}
+```
+
+Wire in development, production, and test builds separately:
+
+```kotlin
+// In your DI container or ViewModel factory
+val eventSink = when {
+    BuildConfig.DEBUG    -> PrintlnEventSink
+    BuildConfig.FIREBASE -> FirebaseEventSink(analytics)
+    else                 -> NoOpEventSink
+}
+
+config { eventSink = eventSink }
+```
+
+Events are emitted from within coroutines and the sink is safe to suspend — use `emit(event)` to write to databases, call remote APIs, or batch events without blocking the agent.
+
 ### Resume from any external trigger
 
 Jump to a specific phase from a push notification, deep link, or WorkManager callback:
