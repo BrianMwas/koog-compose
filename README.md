@@ -498,6 +498,121 @@ Added fields with defaults and removed fields are handled automatically by defau
 
 ---
 
+## Error Handling & Resilience
+
+koog-compose provides production-grade error recovery patterns to keep your agent running even when dependencies fail.
+
+### Recovery Hints
+
+Tool failures now carry metadata to guide the agent's recovery strategy:
+
+```kotlin
+class SavePhotoTool : StatefulTool<AppState>() {
+    override suspend fun execute(args: JsonObject): ToolResult {
+        return try {
+            saveFile(args["path"]?.content ?: "")
+            ToolResult.Success("Saved")
+        } catch (e: IOException) when {
+            e.isNetworkRelated() -> ToolResult.Failure(
+                message = "Network hiccup. Retrying shortly...",
+                retryable = true,                           // Agent can retry automatically
+                recoveryHint = RecoveryHint.RetryAfterDelay // With backoff
+            )
+            e.isStorageFull() -> ToolResult.Denied(
+                reason = "Storage full",
+                recoveryHint = RecoveryHint.RequiresUserAction(
+                    "Please free up space and say 'try again'"
+                )
+            )
+            else -> ToolResult.Failure("Couldn't save", retryable = false)
+        }
+    }
+}
+```
+
+Recovery hint types:
+
+| Hint | Use Case |
+|------|----------|
+| `RetryAfterDelay` | Transient failures (network timeout, rate limit) |
+| `RequiresUserAction` | User action needed (permission, confirmation) |
+| `DegradedFallback` | Fall back to limited functionality instead of crashing |
+| `None` | Permanent failure, don't retry |
+
+### Circuit Breaker
+
+Prevent cascading failures when an external service keeps failing:
+
+```kotlin
+val breaker = CircuitBreaker(failureThreshold = 5, cooldownMs = 60_000)
+val tool = CircuitBreakerGuard(
+    delegate = SavePhotoTool(stateStore),
+    circuitBreaker = breaker
+)
+
+// After 5 failures: circuit opens, returns user-friendly message
+// After 60s cooldown: circuit enters half-open (trial mode)
+// On success: circuit closes, normal operation resumed
+```
+
+States:
+- **CLOSED** (normal) → failures counted
+- **OPEN** (broken) → calls rejected immediately
+- **HALF_OPEN** (trial) → one success closes it, one failure reopens
+
+### Session Corruption Recovery
+
+Sessions corrupted by storage errors are detected and recovered:
+
+```kotlin
+val store = RoomSessionStore(dao, serializer)
+
+// Load with automatic recovery
+val result = store.loadOrRecover(sessionId)
+when (result) {
+    is SessionLoadResult.Success -> {
+        session = resumeSession(result.session)
+    }
+    is SessionLoadResult.Recovered -> {
+        showMessage(result.reason)  // "Session corrupted, starting fresh"
+        session = startNewSession()
+    }
+    is SessionLoadResult.NotFound -> { }
+}
+```
+
+### Retry with Backoff
+
+Configure automatic retries in your session config:
+
+```kotlin
+config {
+    retry {
+        maxAttempts = 3
+        initialDelayMs = 1_000
+        backoffMultiplier = 2.0   // 1s → 2s → 4s
+    }
+}
+```
+
+### Error Mapping for Users
+
+Never show raw exceptions to users. Map internal errors to friendly messages:
+
+```kotlin
+// Inside your tool
+catch (e: IOException) {
+    val userMessage = when {
+        e.isNetworkRelated() -> "Internet connection problem — trying again..."
+        e.isStorageFull() -> "Your device is full — please free up space"
+        else -> "Something went wrong — our team is aware"
+    }
+    ToolResult.Failure(userMessage, retryable = false)
+}
+```
+
+---
+
 ## Privacy
 
 All data stays on the device by default. koog-compose does not transmit prompts, responses, tool args, or telemetry anywhere. You own the `SessionStore`. Audit logs stay in-memory only, with optional PII redaction:
