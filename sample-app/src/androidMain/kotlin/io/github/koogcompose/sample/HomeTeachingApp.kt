@@ -27,6 +27,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -318,6 +320,14 @@ fun buildTeachingContext(
     }
 }
 
+// ── Alias for Persistence Support ─────────────────────────────────────────────
+
+fun buildTeachingContextWithPersistence(
+    stateStore: KoogStateStore<TeachingState>,
+    activityResults: KoogActivityResultRegistry,
+    context: Context,
+) = buildTeachingContext(stateStore, activityResults, context)
+
 // ── ViewModel ────────────────────────────────────────────────────────────────
 
 class HomeTeachingViewModel(
@@ -356,6 +366,32 @@ fun HomeTeachingApp(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
+    // Optional: Show legacy mode without persistence (for quick demo)
+    // Set this to true to show old behavior, false for new persistence mode
+    val useLegacyMode = false
+
+    if (useLegacyMode) {
+        // Legacy mode: simple teaching app without session persistence
+        HomeTeachingAppLegacy(
+            modifier = modifier,
+            snackbarHostState = snackbarHostState,
+        )
+    } else {
+        // New mode: with session persistence and resume capability
+        HomeTeachingAppWithPersistence(
+            modifier = modifier,
+            snackbarHostState = snackbarHostState,
+        )
+    }
+}
+
+@Composable
+private fun HomeTeachingAppLegacy(
+    modifier: Modifier,
+    snackbarHostState: SnackbarHostState,
+) {
+    val context = LocalContext.current
+
     // ActivityResult registry — registered once at Activity startup
     val activityResults = remember { KoogActivityResultRegistry(context) }
 
@@ -374,9 +410,6 @@ fun HomeTeachingApp(
         }
     )
 
-    // Register launchers on the Activity (handled by MainActivity.onCreate)
-    // The registry is passed to the composable but launchers are already registered
-
     val chatState = rememberChatState(
         handle = viewModel.session,
         context = viewModel.session.context,
@@ -388,15 +421,78 @@ fun HomeTeachingApp(
         chatState = chatState,
         state = state,
         currentPhase = currentPhase,
-        onCameraClick = {
-            // Legacy button — the agent can also trigger camera via SaveTopicPhotoTool
-            // This button is kept for users who prefer explicit camera access
-            // In production, you'd rely entirely on the tool-based approach
-        },
+        onCameraClick = {},
         onSend = { viewModel.send(it) },
         snackbarHostState = snackbarHostState,
         modifier = modifier,
     )
+}
+
+@Composable
+private fun HomeTeachingAppWithPersistence(
+    modifier: Modifier,
+    snackbarHostState: SnackbarHostState,
+) {
+    val context = LocalContext.current
+    val persistenceManager = remember { SessionPersistenceManager(context) }
+
+    // ActivityResult registry — registered once at Activity startup
+    val activityResults = remember { KoogActivityResultRegistry(context) }
+
+    // Build agent definition with registry (not used here, but kept for structure)
+    val agentDef = remember {
+        val stateStore = KoogStateStore(TeachingState())
+        buildTeachingContext(stateStore, activityResults, context)
+    }
+
+    val viewModel: HomeTeachingViewModelWithPersistence = viewModel(
+        factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                return HomeTeachingViewModelWithPersistence(agentDef, persistenceManager) as T
+            }
+        }
+    )
+
+    val savedSessions by viewModel.savedSessions.collectAsState()
+    val session by viewModel.session.collectAsState()
+
+    if (session == null) {
+        SessionListScreen(
+            sessions = savedSessions,
+            onSessionSelected = { sessionId ->
+                viewModel.resumeSession(sessionId)
+            },
+            onSessionDelete = { sessionId ->
+                viewModel.deleteSession(sessionId)
+            },
+            onNewSession = {
+                viewModel.startNewSession()
+            },
+            onBackClick = {},
+            modifier = modifier,
+        )
+    } else {
+        val currentSession = session
+        if (currentSession != null) {
+            val chatState = rememberChatState(
+                handle = currentSession,
+                context = currentSession.context,
+            )
+            val currentPhase by viewModel.currentPhase.collectAsState(initial = "")
+            val state by viewModel.appState.collectAsState()
+
+            HomeTeachingScreen(
+                chatState = chatState,
+                state = state,
+                currentPhase = currentPhase,
+                onCameraClick = {},
+                onSend = { viewModel.send(it) },
+                snackbarHostState = snackbarHostState,
+                modifier = modifier,
+            )
+        }
+    }
 }
 
 @Composable
