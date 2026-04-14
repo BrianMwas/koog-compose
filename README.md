@@ -13,6 +13,9 @@ Built on [JetBrains Koog](https://github.com/JetBrains/koog).
 
 ---
 
+
+
+
 ## The core idea
 
 Most AI integrations treat the LLM as a text box. koog-compose treats it as an orchestrator.
@@ -29,13 +32,14 @@ This works because koog-compose bridges two things that usually live in separate
 
 ```kotlin
 dependencies {
-    implementation("io.github.brianmwas.koog_compose:koog-compose-core:1.3.0")
+    implementation("io.github.brianmwas.koog_compose:koog-compose-core:1.4.2")
 
     // Optional modules — add what you need
-    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:1.3.0")           // Material 3 chat components
-    implementation("io.github.brianmwas.koog_compose:koog-compose-device:1.3.0")       // GPS, alarms, WorkManager (Android)
-    implementation("io.github.brianmwas.koog_compose:koog-compose-mediapipe:1.3.0")    // On-device models (Gemma 4, Apple FMs)
-    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:1.3.0") // Room-backed session persistence
+    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:1.4.2")           // Material 3 chat components
+    implementation("io.github.brianmwas.koog_compose:koog-compose-device:1.4.2")       // GPS, alarms, WorkManager (Android)
+    implementation("io.github.brianmwas.koog_compose:koog-compose-mediapipe:1.4.2")    // On-device models (Gemma 4, Apple FMs)
+    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:1.4.2") // Room-backed session persistence
+    implementation("io.github.brianmwas.koog_compose:koog-compose-testing:1.4.2")      // Test utilities
 }
 ```
 
