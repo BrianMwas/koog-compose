@@ -9,11 +9,22 @@ import androidx.compose.ui.Modifier
 import io.github.koogcompose.sample.HomeTeachingApp
 
 class MainActivity : ComponentActivity() {
+
+    // ActivityResult registry — registered once, used by koog-compose tools
+    private lateinit var activityResults: KoogActivityResultRegistry
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Create registry with context, then register launchers
+        activityResults = KoogActivityResultRegistry(this)
+        activityResults.register(this)
+
         setContent {
             MaterialTheme {
-                HomeTeachingApp(modifier = Modifier.fillMaxSize())
+                HomeTeachingApp(
+                    modifier = Modifier.fillMaxSize(),
+                )
             }
         }
     }

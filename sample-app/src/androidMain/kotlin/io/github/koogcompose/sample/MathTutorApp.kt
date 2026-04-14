@@ -284,7 +284,7 @@ private fun MathTutorScreen(
                     // Camera button
                     androidx.compose.material3.IconButton(onClick = onCameraClick) {
                         Icon(
-                            Icons.Default.Camera,
+                            Icons.Default.PhotoCamera,
                             contentDescription = "Take photo of math problem",
                         )
                     }

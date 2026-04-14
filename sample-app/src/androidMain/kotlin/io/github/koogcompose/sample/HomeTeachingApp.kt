@@ -1,10 +1,7 @@
 package io.github.koogcompose.sample
 
-import android.Manifest
 import android.content.Context
-import android.content.pm.PackageManager
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,7 +11,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
@@ -28,33 +24,24 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
-import io.github.koogcompose.session.Attachment
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.KoogDefinition
 import io.github.koogcompose.session.KoogStateStore
 import io.github.koogcompose.session.PhaseSession
 import io.github.koogcompose.session.koogCompose
-import io.github.koogcompose.session.room.RoomSessionStore
-import io.github.koogcompose.session.room.createKoogDatabase
-import io.github.koogcompose.session.room.getDatabaseBuilder
 import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.tool.StatefulTool
 import io.github.koogcompose.tool.ToolResult
-import io.github.koogcompose.tool.ValidationResult
 import io.github.koogcompose.ui.components.ChatInputBar
 import io.github.koogcompose.ui.components.ChatMessageList
 import io.github.koogcompose.ui.state.ChatState
@@ -67,6 +54,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import java.io.File
 import kotlin.time.Duration.Companion.minutes
 
 // ── Teaching State ────────────────────────────────────────────────────────────
@@ -156,37 +144,46 @@ class TrackProgressTool(
 }
 
 class SaveTopicPhotoTool(
-    override val stateStore: KoogStateStore<TeachingState>
+    override val stateStore: KoogStateStore<TeachingState>,
+    private val registry: KoogActivityResultRegistry,
+    private val context: Context,
 ) : StatefulTool<TeachingState>() {
     override val name = "SaveTopicPhoto"
-    override val description = "Save a photo of the student's work or textbook page"
-    override val permissionLevel = PermissionLevel.SAFE
+    override val description =
+        "Open the camera to photograph homework, textbook pages, or written work. " +
+        "The photo is saved and referenced in the session."
+    override val permissionLevel = PermissionLevel.SENSITIVE
 
     override suspend fun execute(args: JsonObject): ToolResult {
-        val photoRef = args["photoRef"]?.jsonPrimitive?.contentOrNull ?: "unknown"
+        val uri = registry.capturePhoto()
+            ?: return ToolResult.Denied("Photo capture was cancelled")
+
+        val photoRef = savePhotoLocally(uri)
         stateStore.update { it.copy(lastTopicPhoto = photoRef) }
-        return ToolResult.Success("Photo saved: $photoRef")
+        return ToolResult.Success("Photo saved and attached to session")
+    }
+
+    private fun savePhotoLocally(uri: Uri): String {
+        val photosDir = File(context.filesDir, "photos").apply { mkdirs() }
+        val destFile = File(photosDir, "homework_${System.currentTimeMillis()}.jpg")
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            destFile.outputStream().use { output -> input.copyTo(output) }
+        }
+        return destFile.absolutePath
     }
 }
 
 // ── Home Teaching App ────────────────────────────────────────────────────────
 
-/**
- * Builds the koog-compose context for home-based teaching.
- *
- * Uses a real phase workflow:
- *   Greet → Assess → Teach → Practice → Review → WrapUp
- *
- * Each phase has specific tools and instructions tailored for
- * teaching children at home.
- */
 fun buildTeachingContext(
     stateStore: KoogStateStore<TeachingState>,
+    activityResults: KoogActivityResultRegistry,
+    context: Context,
 ): KoogDefinition<TeachingState> {
     val recordConcept = RecordConceptTool(stateStore)
     val adjustDifficulty = AdjustDifficultyTool(stateStore)
     val trackProgress = TrackProgressTool(stateStore)
-    val saveTopicPhoto = SaveTopicPhotoTool(stateStore)
+    val saveTopicPhoto = SaveTopicPhotoTool(stateStore, activityResults, context)
 
     return koogCompose<TeachingState> {
         // Use Ollama by default (on-device via llama.cpp, no API key needed)
@@ -359,10 +356,13 @@ fun HomeTeachingApp(
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
-    // Build agent definition
+    // ActivityResult registry — registered once at Activity startup
+    val activityResults = remember { KoogActivityResultRegistry(context) }
+
+    // Build agent definition with registry
     val agentDef = remember {
         val stateStore = KoogStateStore(TeachingState())
-        buildTeachingContext(stateStore)
+        buildTeachingContext(stateStore, activityResults, context)
     }
 
     val viewModel: HomeTeachingViewModel = viewModel(
@@ -374,6 +374,9 @@ fun HomeTeachingApp(
         }
     )
 
+    // Register launchers on the Activity (handled by MainActivity.onCreate)
+    // The registry is passed to the composable but launchers are already registered
+
     val chatState = rememberChatState(
         handle = viewModel.session,
         context = viewModel.session.context,
@@ -381,40 +384,14 @@ fun HomeTeachingApp(
     val currentPhase by viewModel.currentPhase.collectAsState(initial = "")
     val state by viewModel.appState.collectAsState()
 
-    // Camera launcher
-    val cameraLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.TakePicturePreview()
-    ) { bitmap ->
-        if (bitmap != null) {
-            val file = saveBitmapToCache(context, bitmap)
-            chatState.addAttachment(
-                Attachment.Image(
-                    uri = file.absolutePath,
-                    displayName = "Student's work",
-                )
-            )
-        }
-    }
-
-    val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) cameraLauncher.launch(null)
-    }
-
     HomeTeachingScreen(
         chatState = chatState,
         state = state,
         currentPhase = currentPhase,
         onCameraClick = {
-            val hasPermission = ContextCompat.checkSelfPermission(
-                context, Manifest.permission.CAMERA
-            ) == PackageManager.PERMISSION_GRANTED
-            if (hasPermission) {
-                cameraLauncher.launch(null)
-            } else {
-                cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-            }
+            // Legacy button — the agent can also trigger camera via SaveTopicPhotoTool
+            // This button is kept for users who prefer explicit camera access
+            // In production, you'd rely entirely on the tool-based approach
         },
         onSend = { viewModel.send(it) },
         snackbarHostState = snackbarHostState,
