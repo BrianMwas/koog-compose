@@ -13,12 +13,15 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_11)
         }
     }
+    
+    // Configure iOS targets with shared iosMain source set (via default hierarchy)
     iosArm64()
     iosSimulatorArm64()
 
     sourceSets {
         commonMain.dependencies {
             implementation(project(":koog-compose-core"))
+            implementation(project(":koog-compose-ui"))
             implementation(libs.koog.agents)
             implementation(libs.koog.agents.core)
             implementation(libs.koog.prompt.executor)
@@ -31,8 +34,8 @@ kotlin {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
         }
+        
         androidMain.dependencies {
-            implementation(project(":koog-compose-ui"))
             implementation(project(":koog-compose-session-room"))
             implementation(project(":koog-compose-mediapipe"))
             implementation(libs.androidx.activity.compose)
@@ -40,6 +43,9 @@ kotlin {
             implementation(compose.materialIconsExtended)
             implementation("org.jetbrains.androidx.lifecycle:lifecycle-viewmodel-compose:2.8.0")
         }
+        
+        // iOS source sets are auto-created by default hierarchy template
+        // No need to manually define iosMain or set dependsOn
     }
 }
 
