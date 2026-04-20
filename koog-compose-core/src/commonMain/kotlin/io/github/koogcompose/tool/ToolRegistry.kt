@@ -29,9 +29,8 @@ public class ToolRegistry private constructor(
         private val tools = mutableMapOf<String, SecureTool>()
 
         public fun register(tool: SecureTool): Builder = apply {
-            if (tools.containsKey(tool.name)) {
-                println("koog-compose: ToolRegistry warning — replacing existing tool '${tool.name}'")
-            }
+            // Silently replace if a tool with this name already exists.
+            // This is intentional — last registration wins.
             tools[tool.name] = tool
         }
 
