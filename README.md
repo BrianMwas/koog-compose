@@ -11,6 +11,8 @@ koog-compose lets you write a single `koogCompose { }` block that manages your L
 
 Built on [JetBrains Koog](https://github.com/JetBrains/koog).
 
+**Production-ready security**: All tool calls enforce guardrails (rate limits, allowlists, confirmations) with full audit logging. Circuit breakers prevent cascading failures. Thread-safe for parallel tool execution.
+
 ---
 
 
@@ -721,6 +723,8 @@ val tool = CircuitBreakerGuard(
 // After 60s cooldown: circuit enters half-open (trial mode)
 // On success: circuit closes, normal operation resumed
 ```
+
+The circuit breaker counts both thrown exceptions **and** `ToolResult.Failure` as failures. `ToolResult.Denied` (policy/user denials) are not counted — they're not service failures.
 
 States:
 - **CLOSED** (normal) → failures counted

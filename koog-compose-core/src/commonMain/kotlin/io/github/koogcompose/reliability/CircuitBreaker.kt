@@ -1,5 +1,6 @@
 package io.github.koogcompose.reliability
 
+import io.github.koogcompose.observability.currentTimeMs
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -30,17 +31,17 @@ import kotlinx.coroutines.sync.withLock
  * ```
  */
 public class CircuitBreaker(
-    private val failureThreshold: Int = 5,
-    private val cooldownMs: Long = 60_000,
-    private val successThreshold: Int = 2,
+    internal val failureThreshold: Int = 5,
+    internal val cooldownMs: Long = 60_000,
+    internal val successThreshold: Int = 2,
 ) {
-    private enum class State { CLOSED, OPEN, HALF_OPEN }
+    internal enum class State { CLOSED, OPEN, HALF_OPEN }
 
-    private var state = State.CLOSED
-    private var failureCount = 0
-    private var successCount = 0
-    private var openedAtMs = 0L
-    private val mutex = Mutex()
+    internal var state = State.CLOSED
+    internal var failureCount = 0
+    internal var successCount = 0
+    internal var openedAtMs = 0L
+    internal val mutex = Mutex()
 
     /**
      * Wraps a call with circuit breaker protection.
@@ -56,13 +57,14 @@ public class CircuitBreaker(
         mutex.withLock {
             when (state) {
                 State.OPEN -> {
-                    if (io.github.koogcompose.observability.currentTimeMs() - openedAtMs >= cooldownMs) {
+                    val now = currentTimeMs()
+                    if (now - openedAtMs >= cooldownMs) {
                         state = State.HALF_OPEN
                         successCount = 0
                     } else {
                         throw CircuitOpenException(
                             "Circuit is open. Cooldown expires in " +
-                            "${cooldownMs - (io.github.koogcompose.observability.currentTimeMs() - openedAtMs)}ms"
+                            "${cooldownMs - (now - openedAtMs)}ms"
                         )
                     }
                 }
@@ -81,7 +83,7 @@ public class CircuitBreaker(
         }
     }
 
-    private suspend fun recordSuccess() = mutex.withLock {
+    internal suspend fun recordSuccess() = mutex.withLock {
         failureCount = 0
         if (state == State.HALF_OPEN) {
             successCount++
@@ -91,11 +93,11 @@ public class CircuitBreaker(
         }
     }
 
-    private suspend fun recordFailure() = mutex.withLock {
+    internal suspend fun recordFailure() = mutex.withLock {
         failureCount++
         if (state == State.HALF_OPEN || failureCount >= failureThreshold) {
             state = State.OPEN
-            openedAtMs = io.github.koogcompose.observability.currentTimeMs()
+            openedAtMs = currentTimeMs()
             failureCount = 0
         }
     }
@@ -141,14 +143,38 @@ public class CircuitBreakerGuard(
 
     override suspend fun execute(args: kotlinx.serialization.json.JsonObject)
             : io.github.koogcompose.tool.ToolResult {
-        return try {
-            circuitBreaker.call { delegate.execute(args) }
-        } catch (e: CircuitOpenException) {
-            io.github.koogcompose.tool.ToolResult.Failure(
-                message  = "This feature is temporarily unavailable. Please try again in a minute.",
-                retryable = false,
-                recoveryHint = io.github.koogcompose.tool.RecoveryHint.RetryAfterDelay,
-            )
+        // Check if circuit is open before delegating
+        circuitBreaker.mutex.withLock {
+            when (circuitBreaker.state) {
+                CircuitBreaker.State.OPEN -> {
+                    val now = currentTimeMs()
+                    if (now - circuitBreaker.openedAtMs >= circuitBreaker.cooldownMs) {
+                        circuitBreaker.state = CircuitBreaker.State.HALF_OPEN
+                        circuitBreaker.successCount = 0
+                    } else {
+                        return io.github.koogcompose.tool.ToolResult.Failure(
+                            message  = "This feature is temporarily unavailable. Please try again in a minute.",
+                            retryable = false,
+                            recoveryHint = io.github.koogcompose.tool.RecoveryHint.RetryAfterDelay,
+                        )
+                    }
+                }
+                CircuitBreaker.State.CLOSED, CircuitBreaker.State.HALF_OPEN -> Unit
+            }
         }
+
+        // Execute the wrapped tool
+        val result = delegate.execute(args)
+
+        // Count ToolResult.Failure as a circuit breaker failure
+        // but NOT ToolResult.Denied (user/policy denials aren't service failures)
+        when (result) {
+            is io.github.koogcompose.tool.ToolResult.Success,
+            is io.github.koogcompose.tool.ToolResult.Structured<*> -> circuitBreaker.recordSuccess()
+            is io.github.koogcompose.tool.ToolResult.Failure -> circuitBreaker.recordFailure()
+            is io.github.koogcompose.tool.ToolResult.Denied -> Unit // Don't count as failure
+        }
+
+        return result
     }
 }

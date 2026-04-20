@@ -10,20 +10,26 @@ import ai.koog.agents.core.tools.ToolRegistry as KoogToolRegistry
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.serialization.kotlinx.KotlinxSerializer
+import io.github.koogcompose.observability.EventSink
 import io.github.koogcompose.phase.Phase
 import io.github.koogcompose.phase.toTool
 import io.github.koogcompose.provider.KoogAIProvider
+import io.github.koogcompose.security.GuardrailEnforcer
 import io.github.koogcompose.session.KoogComposeContext
-import io.github.koogcompose.tool.toKoogTool
+import io.github.koogcompose.tool.toGuardedKoogTool
 
 /**
  * Builds the concrete Koog tools for a [Phase] — its own tools plus transition tools.
  * Used by [PhaseStrategyBuilder] to scope each phase subgraph.
  */
-internal fun Phase.buildKoogTools(): List<Tool<*, *>> =
+internal fun Phase.buildKoogTools(
+    enforcer: GuardrailEnforcer?,
+    sessionId: String,
+    eventSink: EventSink,
+): List<Tool<*, *>> =
     buildList {
-        toolRegistry.all.forEach { add(it.toKoogTool()) }
-        transitions.forEach { transition -> add(transition.toTool().toKoogTool()) }
+        toolRegistry.all.forEach { add(it.toGuardedKoogTool(enforcer, sessionId, eventSink)) }
+        transitions.forEach { transition -> add(transition.toTool().toGuardedKoogTool(enforcer, sessionId, eventSink)) }
     }
 
 /**
@@ -78,8 +84,15 @@ public class KoogRoutine(
 
         // Only session-global tools live on the agent-level registry.
         // Phase-local and transition tools are scoped on the graph subgraphs.
+        // NOTE: Routine doesn't have a sessionId, so we pass null enforcer → no guardrails
         val toolRegistry = KoogToolRegistry {
-            context.toolRegistry.all.forEach { tool(it.toKoogTool()) }
+            context.toolRegistry.all.forEach {
+                tool(it.toGuardedKoogTool(
+                    enforcer = null,
+                    sessionId = "routine-$id",
+                    eventSink = context.config.eventSink
+                ))
+            }
         }
 
         return AIAgent(

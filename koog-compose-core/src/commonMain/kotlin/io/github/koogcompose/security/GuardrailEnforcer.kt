@@ -2,6 +2,8 @@ package io.github.koogcompose.security
 
 import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.tool.ToolResult
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -15,9 +17,12 @@ internal class GuardrailEnforcer(
     private val guardrails: Guardrails,
     private val auditLogger: AuditLogger
 ) {
+    // Protects mutable state from concurrent tool calls
+    private val mutex = Mutex()
+
     // Tracks call timestamps per tool for rate limiting: Map<ToolName, List<Timestamp>>
     private val callHistory = mutableMapOf<String, MutableList<Long>>()
-    
+
     // Tracks currently scheduled jobs (for maxScheduledJobs enforcement)
     private var activeJobCount = 0
 
@@ -35,24 +40,24 @@ internal class GuardrailEnforcer(
      * @return [ToolResult.Denied] if guardrails are violated, null otherwise.
      */
     suspend fun validate(
-        toolName: String, 
-        args: JsonObject, 
+        toolName: String,
+        args: JsonObject,
         userId: String?
-    ): ToolResult.Denied? {
+    ): ToolResult.Denied? = mutex.withLock {
         val now = Clock.System.now().toEpochMilliseconds()
 
         // 1. Check Rate Limits
         guardrails.toolRateLimits[toolName]?.let { limit ->
             val windowStart = now - limit.window.inWholeMilliseconds
             val recentCalls = callHistory.getOrPut(toolName) { mutableListOf() }
-            
+
             // Purge old entries
             recentCalls.removeAll { it < windowStart }
-            
+
             if (recentCalls.size >= limit.max) {
                 val reason = "Guardrail: Rate limit exceeded for $toolName (${limit.max} per ${limit.window})"
                 auditLogger.logDenied(toolName, args.toString(), reason, userId)
-                return ToolResult.Denied(reason)
+                return@withLock ToolResult.Denied(reason)
             }
             recentCalls.add(now)
         }
@@ -63,13 +68,13 @@ internal class GuardrailEnforcer(
             if (guardrails.allowedWorkTags.isNotEmpty() && tag !in guardrails.allowedWorkTags) {
                 val reason = "Guardrail: Work tag '$tag' is not in the allowlist."
                 auditLogger.logDenied(toolName, args.toString(), reason, userId)
-                return ToolResult.Denied(reason)
+                return@withLock ToolResult.Denied(reason)
             }
-            
+
             if (activeJobCount >= guardrails.maxScheduledJobs) {
                 val reason = "Guardrail: Maximum background jobs reached (${guardrails.maxScheduledJobs})."
                 auditLogger.logDenied(toolName, args.toString(), reason, userId)
-                return ToolResult.Denied(reason)
+                return@withLock ToolResult.Denied(reason)
             }
         }
 
@@ -79,16 +84,18 @@ internal class GuardrailEnforcer(
             if (guardrails.allowedIntentActions.isNotEmpty() && action !in guardrails.allowedIntentActions) {
                 val reason = "Guardrail: Intent action '$action' is not in the allowlist."
                 auditLogger.logDenied(toolName, args.toString(), reason, userId)
-                return ToolResult.Denied(reason)
+                return@withLock ToolResult.Denied(reason)
             }
         }
 
-        return null // All checks passed
+        null // All checks passed
     }
 
     /** Call this when a background job starts to track [maxScheduledJobs] */
-    internal fun notifyJobStarted() { activeJobCount++ }
-    
+    internal suspend fun notifyJobStarted() = mutex.withLock { activeJobCount++ }
+
     /** Call this when a background job finishes */
-    internal fun notifyJobFinished() { if (activeJobCount > 0) activeJobCount-- }
+    internal suspend fun notifyJobFinished() = mutex.withLock {
+        if (activeJobCount > 0) activeJobCount--
+    }
 }

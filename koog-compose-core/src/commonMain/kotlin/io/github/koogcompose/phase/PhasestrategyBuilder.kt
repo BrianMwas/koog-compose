@@ -21,11 +21,13 @@ import ai.koog.agents.memory.feature.history.RetrieveFactsFromHistory
 import ai.koog.agents.memory.model.Concept
 import ai.koog.agents.memory.model.FactType
 import ai.koog.prompt.message.Message
+import io.github.koogcompose.observability.EventSink
+import io.github.koogcompose.security.GuardrailEnforcer
 import io.github.koogcompose.session.CompressionTrigger
 import io.github.koogcompose.session.HistoryCompression
 import io.github.koogcompose.session.HistoryCompressionConfig
 import io.github.koogcompose.session.KoogComposeContext
-import io.github.koogcompose.tool.toKoogTool
+import io.github.koogcompose.tool.toGuardedKoogTool
 
 /**
  * Builds the Koog graph strategy that mediates between phase definitions and the agent runtime.
@@ -45,7 +47,10 @@ internal object PhaseStrategyBuilder {
 
     internal fun build(
         context: KoogComposeContext<*>,
-        strategyName: String = "koog-compose-phase-strategy"
+        strategyName: String = "koog-compose-phase-strategy",
+        enforcer: GuardrailEnforcer?,
+        sessionId: String,
+        eventSink: EventSink,
     ): AIAgentGraphStrategy<String, String> {
         val phases = context.phaseRegistry.all
         require(phases.isNotEmpty()) {
@@ -67,6 +72,9 @@ internal object PhaseStrategyBuilder {
                         phase,
                         compressionConfig,
                         koogCompressionStrategy,
+                        enforcer,
+                        sessionId,
+                        eventSink,
                         getPending = { pendingPhaseName },
                         setPending = { pendingPhaseName = it }
                     )
@@ -74,6 +82,9 @@ internal object PhaseStrategyBuilder {
                         phase,
                         compressionConfig,
                         koogCompressionStrategy,
+                        enforcer,
+                        sessionId,
+                        eventSink,
                         getPending = { pendingPhaseName },
                         setPending = { pendingPhaseName = it }
                     )
@@ -81,6 +92,9 @@ internal object PhaseStrategyBuilder {
                         phase,
                         compressionConfig,
                         koogCompressionStrategy,
+                        enforcer,
+                        sessionId,
+                        eventSink,
                         getPending = { pendingPhaseName },
                         setPending = { pendingPhaseName = it }
                     )
@@ -138,13 +152,16 @@ internal object PhaseStrategyBuilder {
         phase: Phase,
         compressionConfig: HistoryCompressionConfig?,
         koogCompressionStrategy: HistoryCompressionStrategy?,
+        enforcer: GuardrailEnforcer?,
+        sessionId: String,
+        eventSink: EventSink,
         getPending: () -> String?,
         setPending: (String?) -> Unit,
     ): AIAgentSubgraph<String, String> {
         // Collect all tools from all branches across all parallel groups
         val allBranchTools = phase.parallelGroups.flatten()
             .flatMap { it.toolRegistry.all }
-            .map { it.toKoogTool() }
+            .map { it.toGuardedKoogTool(enforcer, sessionId, eventSink) }
 
         val parent by subgraph<String, String>(name = phase.name, tools = allBranchTools) {
             val nodeCallLLM by nodeLLMRequestMultiple("${phase.name}_llm_parallel")
@@ -223,12 +240,15 @@ internal object PhaseStrategyBuilder {
         phase: Phase,
         compressionConfig: HistoryCompressionConfig?,
         koogCompressionStrategy: HistoryCompressionStrategy?,
+        enforcer: GuardrailEnforcer?,
+        sessionId: String,
+        eventSink: EventSink,
         getPending: () -> String?,
         setPending: (String?) -> Unit,
     ): AIAgentSubgraph<String, String> {
         // Build each subphase as its own flat subgraph
         val subgraphList = phase.subphases.map { sub ->
-            buildFlatSubgraph(sub, compressionConfig, koogCompressionStrategy, getPending, setPending)
+            buildFlatSubgraph(sub, compressionConfig, koogCompressionStrategy, enforcer, sessionId, eventSink, getPending, setPending)
         }
 
         // Wrap them in a parent subgraph that chains them sequentially
@@ -268,10 +288,13 @@ internal object PhaseStrategyBuilder {
         phase: Phase,
         compressionConfig: HistoryCompressionConfig?,
         koogCompressionStrategy: HistoryCompressionStrategy?,
+        enforcer: GuardrailEnforcer?,
+        sessionId: String,
+        eventSink: EventSink,
         getPending: () -> String?,
         setPending: (String?) -> Unit,
     ): AIAgentSubgraph<String, String> {
-        val phaseTools = phase.buildKoogTools()
+        val phaseTools = phase.buildKoogTools(enforcer, sessionId, eventSink)
 
         val phaseSubgraph by subgraph<String, String>(
             name = phase.name,

@@ -101,8 +101,10 @@ public data class HistoryCompressionConfig(
 public data class RetryPolicy(
     /** Number of retry attempts before surfacing an error. */
     val maxAttempts: Int = 3,
-    /** Initial delay in ms, doubles on each retry. */
+    /** Initial delay in ms. */
     val initialDelayMs: Long = 500L,
+    /** Backoff multiplier applied on each retry. Default 2.0 = exponential backoff. */
+    val backoffMultiplier: Double = 2.0,
     /** Whether to use a StructureFixingParser for structured output failures. */
     val useStructureFixingParser: Boolean = true,
     /** Number of structure-fixing retries (separate from network retries). */
@@ -227,10 +229,11 @@ public class HistoryCompressionConfigBuilder {
 public class RetryPolicyBuilder {
     public var maxAttempts: Int = 3
     public var initialDelayMs: Long = 500L
+    public var backoffMultiplier: Double = 2.0
     public var useStructureFixingParser: Boolean = true
     public var structureFixingRetries: Int = 3
 
-    public fun build(): RetryPolicy = RetryPolicy(maxAttempts, initialDelayMs, useStructureFixingParser, structureFixingRetries)
+    public fun build(): RetryPolicy = RetryPolicy(maxAttempts, initialDelayMs, backoffMultiplier, useStructureFixingParser, structureFixingRetries)
 }
 
 public class LLMParamsConfigBuilder {

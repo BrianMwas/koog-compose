@@ -6,6 +6,9 @@ import ai.koog.agents.core.tools.ToolParameterDescriptor
 import ai.koog.agents.core.tools.ToolParameterType
 import ai.koog.serialization.KSerializerTypeToken
 import ai.koog.serialization.annotations.InternalKoogSerializationApi
+import io.github.koogcompose.observability.EventSink
+import io.github.koogcompose.security.GuardedTool
+import io.github.koogcompose.security.GuardrailEnforcer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -43,6 +46,34 @@ internal fun SecureTool.toKoogTool(): Tool<JsonObject, String> {
             }
         }
     }
+}
+
+/**
+ * Wraps this tool with [GuardedTool] and converts it to a Koog [Tool].
+ *
+ * All guardrails (validation, rate limits, allowlists, permission
+ * confirmations) and observability ([AgentEvent.ToolCalled],
+ * [AgentEvent.GuardrailDenied]) run through the shared [enforcer]
+ * and [eventSink] when the LLM invokes the returned tool.
+ *
+ * When [enforcer] is null, behaves identically to [toKoogTool] — used
+ * by code paths that don't have a session-scoped enforcer (e.g.
+ * free-standing [KoogRoutine]).
+ */
+internal fun SecureTool.toGuardedKoogTool(
+    enforcer: GuardrailEnforcer?,
+    sessionId: String,
+    eventSink: EventSink,
+    userId: String? = null,
+): Tool<JsonObject, String> {
+    if (enforcer == null) return toKoogTool()
+    return GuardedTool(
+        delegate = this,
+        enforcer = enforcer,
+        userId = userId,
+        sessionId = sessionId,
+        eventSink = eventSink,
+    ).toKoogTool()
 }
 
 @OptIn(InternalKoogSerializationApi::class)

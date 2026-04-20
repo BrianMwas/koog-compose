@@ -194,7 +194,7 @@ public class PhaseSession<S>(
                     _activity.value = AgentActivity.Thinking
                     _activityDetail.value = ""
                     kotlinx.coroutines.delay(delayMs)
-                    delayMs *= 2
+                    delayMs = (delayMs * retryPolicy.backoffMultiplier).toLong()
                 }
                 try {
                     ensureAgentCreated(turnEventHandlers)
