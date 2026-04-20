@@ -110,24 +110,37 @@ val runCoach = koogCompose<RunState> {
 }
 ```
 
-### 5. Wire it to a ViewModel
+### 5. Wire it to a ViewModel (or use Compose directly)
 
+**Option A: ViewModel + Compose** (traditional)
 ```kotlin
 class RunViewModel(context: KoogComposeContext<RunState>, executor: PromptExecutor) : ViewModel() {
-    val session = PhaseSession(
-        context   = context,
-        executor  = executor,
-        sessionId = "run_brian",
-        scope     = viewModelScope,
-    )
+    val session = phaseSession(context, executor) {
+        sessionId = "run_brian"
+        scope = viewModelScope
+    }
 
     val responseStream = session.responseStream  // Flow<String> — tokens as they arrive
     val runState       = session.appState        // StateFlow<RunState>
 }
 ```
 
+**Option B: Pure Compose** (recommended for new code)
+```kotlin
+@Composable
+fun RunScreen(definition: KoogDefinition<RunState> = koogCompose { ... }) {
+    val session = rememberPhaseSession(definition) {
+        sessionId = "run_brian"
+    }
+
+    val responseStream = session.responseStream
+    val runState by session.appState.collectAsState()
+}
+```
+
 ### 6. Render it
 
+**With ViewModel:**
 ```kotlin
 @Composable
 fun RunScreen(viewModel: RunViewModel = viewModel()) {
@@ -140,6 +153,25 @@ fun RunScreen(viewModel: RunViewModel = viewModel()) {
 
     Scaffold(bottomBar = { ChatInputBar(chatState) }) { padding ->
         ChatMessageList(chatState, modifier = Modifier.padding(padding))
+    }
+}
+```
+
+**Pure Compose (no ViewModel):**
+```kotlin
+@Composable
+fun RunScreen(definition: KoogDefinition<RunState> = koogCompose { ... }) {
+    val session = rememberPhaseSession(definition) {
+        sessionId = "run_brian"
+    }
+    val runState by session.appState.collectAsState()
+
+    if (runState.isRunning) {
+        Text("Running — ${runState.distanceKm} km")
+    }
+
+    Scaffold(bottomBar = { ChatInputBar(rememberChatState(session)) }) { padding ->
+        ChatMessageList(rememberChatState(session), modifier = Modifier.padding(padding))
     }
 }
 ```
@@ -223,12 +255,17 @@ class LocationTrackerTool(
 Every tool call goes through a pipeline before `execute()` is reached:
 
 ```
-LLM args → validateArgs() → GuardrailEnforcer → confirmation UI → execute()
+LLM args → validateArgs() → GuardrailEnforcer → [SENSITIVE/CRITICAL: confirmation UI] → execute()
+                                                   ↓
+                                         SAFE: skipped, runs silently
 ```
 
 - **`validateArgs()`** — block malformed or unexpected args before they cause runtime errors
 - **`GuardrailEnforcer`** — rate limits and action allowlists per tool
-- **Confirmation UI** — `SAFE` runs silently; `SENSITIVE` shows a bottom sheet; `CRITICAL` shows a full-screen dialog
+- **Confirmation UI** — conditional based on permission level:
+  - `SAFE` runs silently (no UI)
+  - `SENSITIVE` shows a bottom sheet (requires user review)
+  - `CRITICAL` shows a full-screen dialog (high-friction confirmation)
 
 ### Streaming
 
@@ -242,26 +279,91 @@ val displayText by remember {
 }.collectAsState(initial = "")
 ```
 
-### On-device models
+---
 
-koog-compose runs inference locally on the device — no API key, no network call.
+## Testing
+
+`koog-compose-testing` swaps the live provider for a scripted `FakePromptExecutor`. You test real phase transitions and tool dispatch without hitting a model.
+
+```kotlin
+@Test
+fun `"I'm back" transitions from running to finished`() {
+    val session = testPhaseSession(context) {
+        on("I'm back", phase = "running") {
+            transitionTo("finished")
+            callTool("StopTimer")
+            callTool("CalculateStats")
+            respondWith("Great run! 3.2 km in 18 minutes — 5:38 pace.")
+        }
+    }
+
+    session.send("I'm back")
+
+    assertPhase(session, "finished")
+    assertToolCalled(session, "StopTimer")
+    assertState(session) { assertFalse(it.isRunning) }
+}
+```
+
+Run tests without an emulator:
+
+```bash
+./gradlew :koog-compose-core:desktopTest
+```
+
+**Test assertions:**
+
+| Assertion | Purpose |
+|-----------|---------|
+| `assertPhase(session, "phase_name")` | Verify current phase |
+| `assertToolCalled(session, "ToolName")` | Verify tool was invoked |
+| `assertToolNotCalled(session, "ToolName")` | Verify tool was NOT invoked |
+| `assertState(session) { block }` | Assert app state with lambda |
+| `assertResponse(session, "text")` | Verify agent response contains text |
+
+This DSL approach makes tests **deterministic** and **fast** — no network calls, no model inference, no flakiness.
+
+---
+
+### On-device models & Privacy
+
+koog-compose runs inference locally on the device by default — **no API key, no network call, all data stays on-device**.
 
 ```kotlin
 provider {
     onDevice(modelPath = "/data/models/gemma-4-E2B.litertlm") {
         maxToolRounds(8)
         onUnavailable {
-            // Falls back automatically if the model file is missing or device isn't eligible
+            // Fallback only if model is unavailable:
+            // - File missing or corrupted
+            // - Device hardware incompatible
+            // ⚠️ This fallback sends data to Anthropic's servers
             anthropic(apiKey = BuildConfig.KEY)
         }
     }
 }
 ```
 
-| Platform | Backend | Status |
+**Data flow & privacy:**
+
+| Scenario | What happens | Privacy |
+|----------|---|---|
+| On-device model available | All inference runs locally | ✅ 100% on-device, no internet |
+| Model file missing | Falls back to `onUnavailable` block | ⚠️ Data sent to fallback provider (Anthropic, OpenAI, etc.) |
+| User revokes permissions | Tool execution denied, conversation continues | ✅ On-device, no network |
+| Tool calls device APIs (GPS, camera) | Local, permission-gated | ✅ On-device, gated by OS permissions |
+
+**Important:** If you use `onUnavailable { anthropic(...) }` as a fallback, that provider will see:
+- Full conversation history (messages + tool results)
+- Tool names and arguments
+- Application context (phase name, session ID)
+
+If this is unacceptable, use `onUnavailable { throw UnsupportedOperationException(...) }` instead — users will see the error, but no data leaves the device.
+
+| Platform | Backend | Scope |
 |---|---|---|
-| Android | LiteRT-LM with Gemma 4 (E2B / E4B) | ✅ |
-| iOS | Apple Foundation Models (iOS 26+) | ✅ |
+| Android | LiteRT-LM with Gemma 4 (E2B / E4B) | ✅ On-device |
+| iOS | Apple Foundation Models (iOS 26+) | ✅ On-device |
 | Desktop | — | Planned |
 
 On Android, koog-compose disables LiteRT-LM's automatic tool calling loop so Gemma 4's `<tool_call>` responses are routed through koog's own `SecureTool` pipeline — validation and guardrails stay active regardless of the model backend.
@@ -398,73 +500,138 @@ phase("respond") {
 
 ---
 
-## Testing
+## Persistence
 
-`koog-compose-testing` swaps the live provider for a scripted `FakePromptExecutor`. You test real phase transitions and tool dispatch without hitting a model.
+### Session creation (DSL-consistent)
+
+Create sessions using the `phaseSession()` DSL builder for consistency with `koogCompose { }`:
 
 ```kotlin
-@Test
-fun `"I'm back" transitions from running to finished`() {
-    val session = testPhaseSession(context) {
-        on("I'm back", phase = "running") {
-            transitionTo("finished")
-            callTool("StopTimer")
-            callTool("CalculateStats")
-            respondWith("Great run! 3.2 km in 18 minutes — 5:38 pace.")
-        }
+// In ViewModel
+class MyViewModel(context: KoogComposeContext<MyState>, executor: PromptExecutor) : ViewModel() {
+    val session = phaseSession(context, executor) {
+        sessionId = "my_session"
+        scope = viewModelScope
+        store = RoomSessionStore(db.sessionDao())
     }
-
-    session.send("I'm back")
-
-    assertPhase(session, "finished")
-    assertToolCalled(session, "StopTimer")
-    assertState(session) { assertFalse(it.isRunning) }
 }
 ```
 
-Run tests without an emulator:
-
-```bash
-./gradlew :koog-compose-core:desktopTest
+Or in Compose:
+```kotlin
+@Composable
+fun MyScreen(definition: KoogDefinition<MyState>) {
+    val session = rememberPhaseSession(definition) {
+        sessionId = "my_screen_session"
+        store = RedisSessionStore()
+    }
+}
 ```
 
----
+All parameters are optional; defaults are sensible:
+- `sessionId` — defaults to `"default"`
+- `scope` — defaults to `Dispatchers.Default`
+- `store` — defaults to `InMemorySessionStore()`
+- `strategyName` — defaults to `"koog-compose-phases"`
+- `eventHandlers` — defaults to `EventHandlers.Empty`
 
-## Persistence
+### Session storage
 
-### Session memory
-
-Drop in Room-backed persistence with one line:
+Drop in Room-backed persistence by passing a custom `store`:
 
 ```kotlin
-val session = PhaseSession(
-    context   = context,
-    executor  = executor,
-    sessionId = "run_brian",
-    store     = RoomSessionStore(db.sessionDao()),
-    scope     = viewModelScope,
-)
+val session = phaseSession(context, executor) {
+    sessionId = "run_brian"
+    scope = viewModelScope
+    store = RoomSessionStore(db.sessionDao())  // ← Room backend
+}
 ```
 
 Or implement `SessionStore` directly to use any backend (Redis, SQLite, custom).
 
 ### State migration
 
-When your app state evolves, increment the schema version and define an upgrade path:
+When your app state evolves, increment the schema version and define upgrade paths. Migrations are **chained** — if a user skips versions, all intermediate steps run automatically:
 
 ```kotlin
 val migration = object : StateMigration<AppState> {
-    override val schemaVersion = 2
+    override val schemaVersion = 3
     override suspend fun migrate(json: JsonObject, fromVersion: Int): JsonObject {
         return when (fromVersion) {
+            // v1 → v2: add themeMode field
             1    -> json + ("themeMode" to JsonPrimitive("System"))
+            // v2 → v3: rename "userName" → "userDisplayName"
+            2    -> (json.toMutableMap() as MutableMap<String, JsonElement>).apply {
+                val userName = remove("userName")
+                if (userName != null) put("userDisplayName", userName)
+            }.let { JsonObject(it) }
             else -> json
         }
     }
 }
 ```
 
-Added fields with defaults and removed fields are handled automatically by default (`ignoreUnknownKeys` + `coerceInputValues`). Only renamed or retyped fields need an explicit migration.
+**How chaining works:**
+- If stored version is 1 and current is 3: `v1 → v2` runs, then `v2 → v3` runs
+- Each step transforms the JSON once
+- All steps happen before the app sees the state
+
+**Quick migrations** (no explicit handler needed):
+- Added fields with defaults — handled automatically
+- Removed fields — ignored automatically
+- Use `ignoreUnknownKeys` + `coerceInputValues` in serializer
+
+**Explicit migrations** only for:
+- Renamed fields
+- Retyped fields (e.g., `String` → `Int`)
+- Complex transformations (e.g., splitting one field into many)
+
+---
+
+## Session Creation Patterns
+
+koog-compose is DSL-first. All three ways to create a session follow the same builder pattern for consistency:
+
+### 1. **Non-Compose (ViewModel, Services)**
+
+```kotlin
+class MyViewModel(context: KoogComposeContext<MyState>, executor: PromptExecutor) : ViewModel() {
+    val session = phaseSession(context, executor) {
+        sessionId = "my_session"
+        scope = viewModelScope
+        store = RoomSessionStore(db.sessionDao())  // optional
+    }
+}
+```
+
+All parameters except `context` and `executor` are optional.
+
+### 2. **Compose (recommended for new code)**
+
+```kotlin
+@Composable
+fun MyScreen(definition: KoogDefinition<MyState> = koogCompose { ... }) {
+    val session = rememberPhaseSession(definition) {
+        sessionId = "my_screen_session"
+    }
+}
+```
+
+`rememberPhaseSession()` automatically:
+- Binds to the Compose lifecycle
+- Uses `lifecycleScope` (no need to pass `scope`)
+- Memoizes across recompositions
+
+### 3. **Bridge Pattern (when you already have a definition)**
+
+```kotlin
+val definition = koogCompose<MyState> { ... }
+val session = definition.createPhaseSession(executor, viewModelScope) {
+    sessionId = "my_session"
+}
+```
+
+All three patterns are equivalent; choose based on your UI framework.
 
 ---
 

@@ -56,13 +56,13 @@ public class CircuitBreaker(
         mutex.withLock {
             when (state) {
                 State.OPEN -> {
-                    if (System.currentTimeMillis() - openedAtMs >= cooldownMs) {
+                    if (io.github.koogcompose.observability.currentTimeMs() - openedAtMs >= cooldownMs) {
                         state = State.HALF_OPEN
                         successCount = 0
                     } else {
                         throw CircuitOpenException(
                             "Circuit is open. Cooldown expires in " +
-                            "${cooldownMs - (System.currentTimeMillis() - openedAtMs)}ms"
+                            "${cooldownMs - (io.github.koogcompose.observability.currentTimeMs() - openedAtMs)}ms"
                         )
                     }
                 }
@@ -95,7 +95,7 @@ public class CircuitBreaker(
         failureCount++
         if (state == State.HALF_OPEN || failureCount >= failureThreshold) {
             state = State.OPEN
-            openedAtMs = System.currentTimeMillis()
+            openedAtMs = io.github.koogcompose.observability.currentTimeMs()
             failureCount = 0
         }
     }
