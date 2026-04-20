@@ -54,7 +54,7 @@ import kotlinx.serialization.json.JsonObject
  * ```
  */
 public abstract class StatefulTool<S>(
-    public val dispatcher: CoroutineDispatcher = Dispatchers.IO
+    public val dispatcher: CoroutineDispatcher = Dispatchers.Default
 ) : SecureTool {
     public abstract val stateStore: KoogStateStore<S>
 

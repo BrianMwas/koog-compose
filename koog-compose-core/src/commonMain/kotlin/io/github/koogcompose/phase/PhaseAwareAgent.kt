@@ -16,12 +16,14 @@ import ai.koog.serialization.kotlinx.KotlinxSerializer
 import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.installKoogEventHandlers
 import io.github.koogcompose.provider.KoogAIProvider
+import io.github.koogcompose.security.AuditLogger
+import io.github.koogcompose.security.GuardrailEnforcer
 import io.github.koogcompose.session.CompressionTrigger
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.SessionStore
 import io.github.koogcompose.session.SessionStoreChatHistoryProvider
 import io.github.koogcompose.session.StreamingFeature
-import io.github.koogcompose.tool.toKoogTool
+import io.github.koogcompose.tool.toGuardedKoogTool
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -83,14 +85,30 @@ public object PhaseAwareAgent {
             )
 
         val llmModel = provider.resolveModelForConfig()
-        val strategy = PhaseStrategyBuilder.build(resolvedContext, strategyName)
+
+        // Build session-scoped enforcer to apply guardrails, confirmations, and auditing
+        val enforcer = GuardrailEnforcer(
+            guardrails = resolvedContext.config.guardrails,
+            auditLogger = AuditLogger()
+        )
+        val eventSink = resolvedContext.config.eventSink
+
+        val strategy = PhaseStrategyBuilder.build(
+            context = resolvedContext,
+            strategyName = strategyName,
+            enforcer = enforcer,
+            sessionId = sessionId,
+            eventSink = eventSink,
+        )
 
         // Agent-level registry: only session-global tools live here.
         // Phase-local and transition tools are scoped on the subgraphs built
         // by PhaseStrategyBuilder, which keeps the model's visible tool set
         // smaller for each active phase.
         val globalKoogRegistry = KoogToolRegistry {
-            resolvedContext.toolRegistry.all.forEach { tool(it.toKoogTool()) }
+            resolvedContext.toolRegistry.all.forEach {
+                tool(it.toGuardedKoogTool(enforcer, sessionId, eventSink))
+            }
         }
 
         val initialPhase = resolvedContext.phaseRegistry.initialPhase
