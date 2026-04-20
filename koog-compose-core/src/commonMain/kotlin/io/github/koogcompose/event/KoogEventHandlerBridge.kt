@@ -29,8 +29,8 @@ internal fun EventHandlerConfig.installKoogEventHandlers(
                     toolCallId = null,
                     toolName = eventContext.toolName,
                     args = eventContext.toolArgs
-                        ?.let { kotlinx.serialization.json.Json.parseToJsonElement(it.toString()) }
-                        ?.let { it as? kotlinx.serialization.json.JsonObject }
+                        .let { kotlinx.serialization.json.Json.parseToJsonElement(it.toString()) }
+                        .let { it as? kotlinx.serialization.json.JsonObject }
                         ?: kotlinx.serialization.json.buildJsonObject { }
                 )
             )
