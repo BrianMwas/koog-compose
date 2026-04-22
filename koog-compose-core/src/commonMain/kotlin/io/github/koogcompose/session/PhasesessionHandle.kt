@@ -53,6 +53,8 @@ public class PhaseSessionHandle<S>(
      *   nothing is written to history.
      * @throws IllegalArgumentException if the phase is not found.
      */
+    override fun supportsResumeAt(): Boolean = true
+
     override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?): Unit =
         delegate.resumeAt(phaseName, sessionId, userMessage)
 
@@ -144,6 +146,8 @@ public class SessionRunnerHandle<S>(
      * @throws io.github.koogcompose.session.UnknownPhaseException if no registered
      *   agent owns the given phase.
      */
+    override fun supportsResumeAt(): Boolean = true
+
     override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?): Unit =
         delegate.resumeAt(phaseName, sessionId, userMessage)
 

@@ -1,7 +1,9 @@
 package io.github.koogcompose.session
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Unified runtime interface for both single-agent ([PhaseSession]) and
@@ -109,7 +111,25 @@ public interface KoogSessionHandle {
      * detecting tool call loops.
      *
      * Updated after each [KoogEvent.ToolExecutionCompleted].
+     * Default returns a permanently-empty frozen flow; override in
+     * concrete handles that track tool usage ([PhaseSessionHandle],
+     * [SessionRunnerHandle]).
      */
     public val toolCallCounts: StateFlow<Map<String, Int>>
-        get() = kotlinx.coroutines.flow.MutableStateFlow(emptyMap()) // no-op default
+        get() = NO_OP_TOOL_CALL_COUNTS
+
+    /**
+     * Returns true if this handle supports [resumeAt].
+     * Check this before calling [resumeAt] to avoid an
+     * [UnsupportedOperationException] at runtime.
+     *
+     * Returns false by default; overridden by [PhaseSessionHandle]
+     * and [SessionRunnerHandle].
+     */
+    public fun supportsResumeAt(): Boolean = false
+
+    public companion object {
+        private val NO_OP_TOOL_CALL_COUNTS: StateFlow<Map<String, Int>> =
+            MutableStateFlow(emptyMap<String, Int>()).asStateFlow()
+    }
 }
