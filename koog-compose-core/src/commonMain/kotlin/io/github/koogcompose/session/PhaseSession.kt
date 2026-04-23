@@ -274,6 +274,8 @@ public class PhaseSession<S>(
      * @param userMessage Optional user message. When null, a sentinel is used so
      *   nothing is written to history.
      */
+    override fun supportsResumeAt(): Boolean = true
+
     override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?) {
         val effectiveSessionId = sessionId.ifBlank { this.sessionId }
         val effectiveUserMessage = userMessage

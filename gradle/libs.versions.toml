@@ -21,8 +21,8 @@ androidx-core = "1.18.0"
 androidx-lifecycle = "2.10.0"
 androidx-work = "2.11.2"
 androidx-camera = "1.6.0"
-androidx-room = "2.7.0-alpha13"
-androidx-sqlite = "2.5.0-alpha13"
+androidx-room = "2.8.4"
+androidx-sqlite = "2.6.2"
 
 # Kotlin ecosystem
 kotlinx-coroutines = "1.10.2"

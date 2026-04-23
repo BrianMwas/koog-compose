@@ -13,13 +13,29 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 
+/** Reason the on-device provider fell back to a cloud provider. */
+public enum class OnDeviceFallbackReason {
+    /** [OnDeviceProvider.isAvailable] returned false (model missing, OS too old, etc.). */
+    MODEL_UNAVAILABLE,
+    /** Device has on-device inference but the active bridge does not support tool calls. */
+    TOOL_CALLS_UNSUPPORTED,
+    /** The request included attachments, which the on-device model cannot handle. */
+    ATTACHMENTS_NOT_SUPPORTED,
+}
+
 /**
  * Bridges [ProviderConfig.OnDevice] into the standard [AIProvider] contract.
  *
  * Install once at app startup via [installOnDeviceProviderSupport] so
  * `rememberChatState(context)` can resolve `provider { onDevice(...) }`.
+ *
+ * @param onFallbackUsed Optional callback invoked whenever inference is silently
+ *   routed to the configured cloud fallback. Use this to surface a privacy/cost
+ *   notice in your UI or to record a metric. Called on the coroutine dispatcher
+ *   of the calling [PhaseSession].
  */
 public class OnDeviceAIProvider(
+    private val onFallbackUsed: ((reason: OnDeviceFallbackReason) -> Unit)? = null,
 ) : AIProvider {
     override fun <S> stream(
         context: KoogComposeContext<S>,
@@ -33,6 +49,7 @@ public class OnDeviceAIProvider(
         if (attachments.isNotEmpty()) {
             val fallback = fallbackProvider(context, config)
             if (fallback != null) {
+                onFallbackUsed?.invoke(OnDeviceFallbackReason.ATTACHMENTS_NOT_SUPPORTED)
                 emitAll(fallback.stream(context, history, systemPrompt, attachments))
                 return@flow
             }
@@ -56,6 +73,7 @@ public class OnDeviceAIProvider(
             if (!provider.isAvailable()) {
                 val fallback = fallbackProvider(context, config)
                 if (fallback != null) {
+                    onFallbackUsed?.invoke(OnDeviceFallbackReason.MODEL_UNAVAILABLE)
                     emitAll(fallback.stream(context, history, systemPrompt, attachments))
                 } else {
                     emit(
@@ -70,6 +88,7 @@ public class OnDeviceAIProvider(
             if (effectiveTools.isNotEmpty() && !provider.supportsToolCalls()) {
                 val fallback = fallbackProvider(context, config)
                 if (fallback != null) {
+                    onFallbackUsed?.invoke(OnDeviceFallbackReason.TOOL_CALLS_UNSUPPORTED)
                     emitAll(fallback.stream(context, history, systemPrompt, attachments))
                 } else {
                     emit(

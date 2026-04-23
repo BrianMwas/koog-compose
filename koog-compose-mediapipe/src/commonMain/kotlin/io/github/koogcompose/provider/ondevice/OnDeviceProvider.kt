@@ -18,9 +18,17 @@ import kotlinx.coroutines.flow.Flow
  * - World knowledge has a training cutoff; do not use for real-time facts.
  * - Ideal for: device orchestration, natural language → device API, coaching flows.
  *
- * ## iOS (Apple Foundation Models) — upcoming
- * No model path needed. The ~3B parameter model is built into iOS 26+.
- * Apple Intelligence must be enabled on the device.
+ * ## iOS (Apple Foundation Models)
+ * No model path needed. The ~3B parameter on-device model requires **iOS 26+** with
+ * Apple Intelligence enabled. [isAvailable] returns false on older OS versions and
+ * on devices that do not support Apple Intelligence (e.g. older iPhones without the
+ * required neural engine).
+ *
+ * **Silent cloud fallback**: when [isAvailable] returns false and a `fallback` provider
+ * is configured via `onUnavailable { ... }`, all inference is routed to that cloud
+ * provider without any visible indicator in the UI. This has privacy and cost
+ * implications — always log or surface this state in your app using
+ * [OnDeviceAIProvider.onFallbackUsed] or an [EventSink] observer.
  *
  * ## Desktop
  * Not supported by this module. Use Ollama or a cloud provider instead.
