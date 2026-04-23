@@ -6,6 +6,7 @@ import ai.koog.prompt.dsl.Prompt
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.cached.CachedPromptExecutor
 import ai.koog.prompt.executor.clients.LLMClient
+import ai.koog.prompt.executor.clients.LLMClientException
 import ai.koog.prompt.executor.clients.anthropic.AnthropicClientSettings
 import ai.koog.prompt.executor.clients.anthropic.AnthropicLLMClient
 import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
@@ -107,12 +108,17 @@ internal class KoogAIProvider<S>(
                     emit(chunk)
                 }
                 return@flow
-            } catch (error: Throwable) {
-                if (error is CancellationException) throw error
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: LLMClientException) {
+                // Provider-level failure (auth, rate-limit, bad request).
+                // Always store as lastError; only retry if no tokens were
+                // streamed yet and more attempts remain.
                 lastError = error
-                if (emittedAny || index == attempts.lastIndex) {
-                    throw error
-                }
+                if (emittedAny || index == attempts.lastIndex) throw error
+            } catch (error: Throwable) {
+                lastError = error
+                if (emittedAny || index == attempts.lastIndex) throw error
             }
         }
 
