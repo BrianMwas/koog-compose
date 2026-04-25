@@ -30,7 +30,7 @@ kotlinx-serialization = "1.10.0"
 kotlinx-datetime = "0.7.1"
 
 # Koog — the AI engine
-koog = "0.7.2"
+koog = "0.8.0"
 
 # Testing
 junit = "4.13.2"
