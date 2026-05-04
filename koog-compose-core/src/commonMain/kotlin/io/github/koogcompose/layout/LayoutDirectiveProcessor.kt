@@ -139,6 +139,7 @@ public class DefaultLayoutDirectiveProcessor(
                     DirectiveOutcome.Accepted(
                         correlationId = directive.correlationId,
                         resultingStateVersion = newState.version,
+                        directiveReason = directive.reason,
                     )
                 )
             }
