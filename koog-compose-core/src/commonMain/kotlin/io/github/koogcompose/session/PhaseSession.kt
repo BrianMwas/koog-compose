@@ -4,6 +4,7 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.model.PromptExecutor
 import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.KoogEvent
+import io.github.koogcompose.layout.DefaultLayoutDirectiveProcessor
 import io.github.koogcompose.observability.AgentEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +56,12 @@ public class PhaseSession<S>(
 
     // ── New — pull sink from config so callers don't need to pass it ──────
     private val eventSink = context.config.eventSink
+
+    /** Layout engine processor, non-null only when [KoogComposeContext.layoutEngineConfig] is set. */
+    public val layoutProcessor: DefaultLayoutDirectiveProcessor? =
+        context.layoutEngineConfig?.let { cfg ->
+            DefaultLayoutDirectiveProcessor(cfg, scope)
+        }
 
     // ── Activity state ─────────────────────────────────────────────────────
 
@@ -119,6 +126,9 @@ public class PhaseSession<S>(
                 _activity.value = AgentActivity.Idle
                 _activityDetail.value = ""
             }
+
+            // Signal layout engine that a new turn is starting so in-flight coalescing resets.
+            layoutProcessor?.beginTurn()
 
             _activity.value = AgentActivity.Thinking
             _activityDetail.value = ""
