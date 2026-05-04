@@ -132,10 +132,11 @@ public sealed class DirectiveOutcome {
     public abstract val correlationId: DirectiveId
     public abstract val resultingStateVersion: Long?
 
-    /** Directive applied as-is. */
+    /** Directive applied as-is. [directiveReason] mirrors the original directive's reason field. */
     public data class Accepted(
         override val correlationId: DirectiveId,
         override val resultingStateVersion: Long,
+        public val directiveReason: String? = null,
     ) : DirectiveOutcome()
 
     /**
