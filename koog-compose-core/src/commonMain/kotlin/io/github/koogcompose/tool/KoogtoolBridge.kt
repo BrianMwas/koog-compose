@@ -94,18 +94,20 @@ internal fun SecureTool.toKoogToolDescriptor(): ToolDescriptor {
     }
 
     // Fallback: use describeParameters() — all typed as String.
-    val fallbackDescriptors = describeParameters().map {
+    val rawParams = describeParameters()
+    val fallbackDescriptors = rawParams.map {
         ToolParameterDescriptor(
             name = it.name,
             description = it.description,
             type = ToolParameterType.String
         )
     }
+    val requiredNames = rawParams.filter { it.required }.map { it.name }.toSet()
     return ToolDescriptor(
         name = name,
         description = description,
-        requiredParameters = fallbackDescriptors.filter { it.name in it.name },
-        optionalParameters = emptyList()
+        requiredParameters = fallbackDescriptors.filter { it.name in requiredNames },
+        optionalParameters = fallbackDescriptors.filter { it.name !in requiredNames }
     )
 }
 

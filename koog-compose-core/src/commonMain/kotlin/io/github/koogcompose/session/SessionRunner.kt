@@ -195,6 +195,8 @@ public class SessionRunner<S>(
      * @param userMessage Optional user message to feed into the turn. When
      *   null, a sentinel is used so nothing is written to history.
      */
+    override fun supportsResumeAt(): Boolean = true
+
     override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?) {
         val effectiveSessionId = sessionId.ifBlank { this.sessionId }
         scope.launch {

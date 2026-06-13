@@ -1,6 +1,7 @@
 package io.github.koogcompose.session
 
 import ai.koog.prompt.executor.model.PromptExecutor
+import io.github.koogcompose.layout.DefaultLayoutDirectiveProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -53,6 +54,8 @@ public class PhaseSessionHandle<S>(
      *   nothing is written to history.
      * @throws IllegalArgumentException if the phase is not found.
      */
+    override fun supportsResumeAt(): Boolean = true
+
     override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?): Unit =
         delegate.resumeAt(phaseName, sessionId, userMessage)
 
@@ -70,6 +73,10 @@ public class PhaseSessionHandle<S>(
 
     public val turnId: StateFlow<Int>
         get() = delegate.turnId
+
+    /** Non-null when the session was built with a `layout { }` block. */
+    public val layoutProcessor: DefaultLayoutDirectiveProcessor?
+        get() = delegate.layoutProcessor
 }
 
 /**
@@ -144,6 +151,8 @@ public class SessionRunnerHandle<S>(
      * @throws io.github.koogcompose.session.UnknownPhaseException if no registered
      *   agent owns the given phase.
      */
+    override fun supportsResumeAt(): Boolean = true
+
     override fun resumeAt(phaseName: String, sessionId: String, userMessage: String?): Unit =
         delegate.resumeAt(phaseName, sessionId, userMessage)
 

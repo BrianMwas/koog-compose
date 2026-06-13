@@ -1,6 +1,12 @@
 package io.github.koogcompose.session
 
 import io.github.koogcompose.event.EventHandlers
+import io.github.koogcompose.layout.LayoutEngineConfig
+import io.github.koogcompose.layout.LayoutPolicy
+import io.github.koogcompose.layout.LayoutPolicyChain
+import io.github.koogcompose.layout.SlotRegistry
+import io.github.koogcompose.layout.ComponentRegistry
+import io.github.koogcompose.layout.WorkflowContext
 import io.github.koogcompose.observability.EventSink
 import io.github.koogcompose.observability.NoOpEventSink
 import io.github.koogcompose.phase.Phase
@@ -293,6 +299,7 @@ public data class KoogComposeContext<S>(
     override val stateStore: KoogStateStore<S>?,
     val config: KoogConfig,
     val contextualInstructions: List<ContextualInstruction> = emptyList(),
+    val layoutEngineConfig: LayoutEngineConfig? = null,
 ) : KoogDefinition<S> {
     public fun createProvider(): AIProvider =
         ProviderRuntimeRegistry.create(this) ?: KoogAIProvider(this)
@@ -381,6 +388,7 @@ public data class KoogComposeContext<S>(
         private var eventHandlers: EventHandlers = EventHandlers.Empty
         private var config: KoogConfig = KoogConfig()
         private var contextualInstructions: List<ContextualInstruction> = emptyList()
+        private var layoutEngineConfig: LayoutEngineConfig? = null
 
         public fun provider(block: ProviderConfigBuilder.() -> Unit) {
             providerConfig = ProviderConfigBuilder().apply(block).build()
@@ -432,6 +440,22 @@ public data class KoogComposeContext<S>(
             contextualInstructions = ContextualInstructionsBuilder().apply(block).build()
         }
 
+        /**
+         * Enables the agent-driven layout engine for this session.
+         *
+         * ```kotlin
+         * layout {
+         *     workflowContext = WorkflowContext(...)
+         *     slotRegistry    = SlotRegistry(listOf(...))
+         *     componentRegistry = ComponentRegistry(listOf(...))
+         *     policy { /* optional host/workflow policy tiers */ }
+         * }
+         * ```
+         */
+        public fun layout(block: LayoutEngineConfigBuilder.() -> Unit) {
+            layoutEngineConfig = LayoutEngineConfigBuilder().apply(block).build()
+        }
+
         public fun build(): KoogComposeContext<S> = KoogComposeContext(
             providerConfig          = providerConfig
                 ?: error("koog-compose: provider { } block is required."),
@@ -443,6 +467,7 @@ public data class KoogComposeContext<S>(
             stateStore              = stateStore,
             config                  = config,
             contextualInstructions  = contextualInstructions,
+            layoutEngineConfig      = layoutEngineConfig,
         )
     }
 
@@ -530,6 +555,7 @@ public class UnifiedAgentBuilder<S> {
     private var contextualInstructions: List<ContextualInstruction> = emptyList()
     private var store: SessionStore = InMemorySessionStore()
     private var sessionConfig: KoogSessionConfig = KoogSessionConfig()
+    private var layoutEngineConfig: LayoutEngineConfig? = null
 
     // Multi-agent fields
     private var mainAgentDefinition: KoogAgentDefinition? = null
@@ -574,6 +600,11 @@ public class UnifiedAgentBuilder<S> {
 
     public fun contextual(block: ContextualInstructionsBuilder.() -> Unit) {
         contextualInstructions = ContextualInstructionsBuilder().apply(block).build()
+    }
+
+    /** Enables the agent-driven layout engine. See [KoogComposeContext.Builder.layout]. */
+    public fun layout(block: LayoutEngineConfigBuilder.() -> Unit) {
+        layoutEngineConfig = LayoutEngineConfigBuilder().apply(block).build()
     }
 
     // ── Multi-agent DSL blocks ────────────────────────────────────────────
@@ -632,7 +663,36 @@ public class UnifiedAgentBuilder<S> {
                 stateStore = stateStore,
                 config = config,
                 contextualInstructions = contextualInstructions,
+                layoutEngineConfig = layoutEngineConfig,
             )
         }
     }
+}
+
+/**
+ * DSL builder for [LayoutEngineConfig].
+ *
+ * ```kotlin
+ * layout {
+ *     workflowContext   = WorkflowContext(...)
+ *     slotRegistry      = SlotRegistry(listOf(...))
+ *     componentRegistry = ComponentRegistry(listOf(...))
+ * }
+ * ```
+ */
+public class LayoutEngineConfigBuilder {
+    public var workflowContext: WorkflowContext? = null
+    public var slotRegistry: SlotRegistry? = null
+    public var componentRegistry: ComponentRegistry? = null
+    public var policy: LayoutPolicy = LayoutPolicyChain.Empty
+
+    public fun build(): LayoutEngineConfig = LayoutEngineConfig(
+        workflowContext   = workflowContext
+            ?: error("koog-compose layout { }: workflowContext is required"),
+        slotRegistry      = slotRegistry
+            ?: error("koog-compose layout { }: slotRegistry is required"),
+        componentRegistry = componentRegistry
+            ?: error("koog-compose layout { }: componentRegistry is required"),
+        policy            = policy,
+    )
 }
