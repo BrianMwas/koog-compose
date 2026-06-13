@@ -140,7 +140,11 @@ public class FakePromptExecutor internal constructor(
 
         recordToolResults(prompt)
 
-        val latestUserMessage = prompt.messages.lastOrNull { message -> message is Message.User }?.textContent()
+        // koog 1.0.0 appends tool results as Message.User messages carrying only a
+        // MessagePart.Tool.Result. Skip those and match the last *text* user message.
+        val latestUserMessage = prompt.messages
+            .lastOrNull { message -> message is Message.User && message.parts.any { it is MessagePart.Text } }
+            ?.textContent()
         val active = if (activeRule != null && activeRule?.remainingSteps?.isNotEmpty() == true) {
             val currentRule = requireNotNull(activeRule)
             if (latestUserMessage != null && currentRule.userMessage != latestUserMessage) {
