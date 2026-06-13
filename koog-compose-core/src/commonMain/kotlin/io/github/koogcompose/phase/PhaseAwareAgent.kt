@@ -16,6 +16,7 @@ import ai.koog.serialization.kotlinx.KotlinxSerializer
 import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.event.installKoogEventHandlers
+import io.github.koogcompose.layout.LayoutDirectiveProcessor
 import io.github.koogcompose.provider.resolveModel
 import io.github.koogcompose.security.AuditLogger
 import io.github.koogcompose.security.GuardrailEnforcer
@@ -26,6 +27,7 @@ import io.github.koogcompose.session.SessionStore
 import io.github.koogcompose.session.SessionStoreChatHistoryProvider
 import io.github.koogcompose.session.StreamingFeature
 import io.github.koogcompose.tool.toGuardedKoogTool
+import io.github.koogcompose.workflow.EmitLayoutDirectiveSecureTool
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -76,6 +78,7 @@ public object PhaseAwareAgent {
         coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
         persistenceStorage: FilePersistenceStorageProvider<Path>? = null,
         permissionManager: PermissionManager? = null,
+        layoutProcessor: LayoutDirectiveProcessor? = null,
     ): AIAgent<String, String> {
 
         // Resolve [ToolName] refs in all phase instructions before building the strategy.
@@ -141,6 +144,14 @@ public object PhaseAwareAgent {
         val globalKoogRegistry = KoogToolRegistry {
             resolvedContext.toolRegistry.all.forEach {
                 tool(it.toGuardedKoogTool(enforcer, sessionId, eventSink))
+            }
+            // When a layout { } block is configured, let the agent drive the UI by
+            // calling emit_layout_directive — bridged to the session's layout processor.
+            if (layoutProcessor != null) {
+                tool(
+                    EmitLayoutDirectiveSecureTool(layoutProcessor)
+                        .toGuardedKoogTool(enforcer, sessionId, eventSink)
+                )
             }
         }
 
