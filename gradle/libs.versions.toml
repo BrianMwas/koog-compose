@@ -8,7 +8,7 @@ dokka = "1.9.20"
 
 # Android SDK
 android-compileSdk = "36"
-android-minSdk = "26"
+android-minSdk = "35"
 android-targetSdk = "36"
 
 # Compose
