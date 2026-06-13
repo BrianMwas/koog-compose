@@ -30,10 +30,11 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
             implementation(libs.kotlinx.datetime)
 
-            // Koog — the AI engine this library wraps
-            implementation(libs.koog.agents)
-            implementation(libs.koog.agents.core)
-            implementation(libs.koog.prompt.executor)
+            // Koog types are part of the public API via KoogDefinition,
+            // PhaseSession, SessionRunner, and the Compose helpers.
+            api(libs.koog.agents)
+            api(libs.koog.agents.core)
+            api(libs.koog.prompt.executor)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

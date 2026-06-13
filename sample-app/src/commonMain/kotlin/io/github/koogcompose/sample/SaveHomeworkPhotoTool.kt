@@ -10,6 +10,7 @@ import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.session.KoogStateStore
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.Clock
 
 /**
  * Tool for saving homework photos with full error handling and recovery strategies.
@@ -30,7 +31,7 @@ class SaveHomeworkPhotoTool(
     override val description = "Saves a homework photo to local storage"
     override val permissionLevel = PermissionLevel.SENSITIVE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val photoUri = args["photoUri"]?.jsonPrimitive?.content
             ?: return ToolResult.Failure(
                 message = "No photo URI provided — please try taking the photo again.",
@@ -72,7 +73,7 @@ class SaveHomeworkPhotoTool(
                 )
 
                 // Permission denied
-                e is SecurityException -> ToolResult.Denied(
+                errorMessage.contains("permission", ignoreCase = true) -> ToolResult.Denied(
                     reason = "Storage permission was denied. Please grant it in Settings.",
                     recoveryHint = RecoveryHint.RequiresUserAction(
                         "Please go to Settings → Permissions → Storage and grant access."
@@ -104,7 +105,7 @@ class SaveHomeworkPhotoTool(
 
     private fun saveToDisk(photoUri: String): String {
         // Stub implementation — in production, save to actual file system
-        return "/storage/emulated/0/DCIM/homework_${System.currentTimeMillis()}.jpg"
+        return "/storage/emulated/0/DCIM/homework_${Clock.System.now().toEpochMilliseconds()}.jpg"
     }
 
     private fun isNetworkRelated(message: String): Boolean =

@@ -14,10 +14,12 @@ import ai.koog.agents.core.tools.ToolRegistry as KoogToolRegistry
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.serialization.kotlinx.KotlinxSerializer
 import io.github.koogcompose.event.EventHandlers
+import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.event.installKoogEventHandlers
-import io.github.koogcompose.provider.KoogAIProvider
+import io.github.koogcompose.provider.resolveModel
 import io.github.koogcompose.security.AuditLogger
 import io.github.koogcompose.security.GuardrailEnforcer
+import io.github.koogcompose.security.PermissionManager
 import io.github.koogcompose.session.CompressionTrigger
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.SessionStore
@@ -27,7 +29,9 @@ import io.github.koogcompose.tool.toGuardedKoogTool
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.launch
 import kotlinx.io.files.Path
+import kotlin.time.Clock
 
 /**
  * Creates a single [AIAgent] whose strategy is the multi-phase subgraph pipeline
@@ -71,6 +75,7 @@ public object PhaseAwareAgent {
         currentTurnId: () -> String = { "0" },
         coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Default),
         persistenceStorage: FilePersistenceStorageProvider<Path>? = null,
+        permissionManager: PermissionManager? = null,
     ): AIAgent<String, String> {
 
         // Resolve [ToolName] refs in all phase instructions before building the strategy.
@@ -78,19 +83,32 @@ public object PhaseAwareAgent {
             phaseRegistry = context.phaseRegistry.resolveToolRefs(context.toolRegistry)
         )
 
-        val provider = resolvedContext.provider as? KoogAIProvider<*>
-            ?: error(
-                "koog-compose: PhaseAwareAgent requires a KoogAIProvider. " +
-                        "Make sure you called provider { } in your koogCompose { } block."
-            )
-
-        val llmModel = provider.resolveModelForConfig()
+        val llmModel = resolveModel(resolvedContext.providerConfig)
+        val initialPhase = resolvedContext.phaseRegistry.initialPhase
+            ?: error("koog-compose: No phases registered. Add at least one phase { } block.")
+        var runtimePhaseName: String? = resolvedContext.activePhaseName ?: initialPhase.name
 
         // Build session-scoped enforcer to apply guardrails, confirmations, and auditing
         val enforcer = GuardrailEnforcer(
             guardrails = resolvedContext.config.guardrails,
             auditLogger = AuditLogger()
         )
+        if (permissionManager != null) {
+            enforcer.onConfirmationRequired = { tool, args ->
+                eventHandlers.dispatch(
+                    KoogEvent.ToolConfirmationRequested(
+                        timestampMs = Clock.System.now().toEpochMilliseconds(),
+                        turnId = currentTurnId(),
+                        phaseName = runtimePhaseName,
+                        toolCallId = null,
+                        toolName = tool.name,
+                        permissionLevel = tool.permissionLevel,
+                        confirmationMessage = tool.confirmationMessage(args),
+                    )
+                )
+                permissionManager.requestApproval(tool, args)
+            }
+        }
         val eventSink = resolvedContext.config.eventSink
 
         val strategy = PhaseStrategyBuilder.build(
@@ -99,6 +117,21 @@ public object PhaseAwareAgent {
             enforcer = enforcer,
             sessionId = sessionId,
             eventSink = eventSink,
+            onPhaseTransition = { fromPhaseName, toPhaseName, toolCallId ->
+                runtimePhaseName = toPhaseName
+                coroutineScope.launch {
+                    eventHandlers.dispatch(
+                        KoogEvent.PhaseTransitioned(
+                            timestampMs = Clock.System.now().toEpochMilliseconds(),
+                            turnId = currentTurnId(),
+                            phaseName = fromPhaseName,
+                            toolCallId = toolCallId,
+                            fromPhaseName = fromPhaseName,
+                            toPhaseName = toPhaseName,
+                        )
+                    )
+                }
+            },
         )
 
         // Agent-level registry: only session-global tools live here.
@@ -111,12 +144,14 @@ public object PhaseAwareAgent {
             }
         }
 
-        val initialPhase = resolvedContext.phaseRegistry.initialPhase
-            ?: error("koog-compose: No phases registered. Add at least one phase { } block.")
-
         val agentConfig = AIAgentConfig(
             prompt = prompt("koog-compose-session") {
-                system(initialPhase.resolvedInstructions)
+                system(
+                    "$PHASE_SYSTEM_MARKER\n" +
+                        resolvedContext
+                            .copy(activePhaseName = initialPhase.name)
+                            .resolveEffectiveInstructions()
+                )
             },
             model = llmModel,
             maxAgentIterations = resolvedContext.config.maxAgentIterations,
@@ -172,8 +207,7 @@ public object PhaseAwareAgent {
                         installKoogEventHandlers(
                             eventHandlers = eventHandlers,
                             phaseName = {
-                                resolvedContext.activePhaseName
-                                    ?: resolvedContext.phaseRegistry.initialPhase?.name
+                                runtimePhaseName
                             },
                             turnIdProvider = currentTurnId,
                         )

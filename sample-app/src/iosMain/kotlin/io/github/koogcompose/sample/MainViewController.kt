@@ -58,7 +58,6 @@ private fun QuickStartContainer() {
                 // 1. Read ANTHROPIC_API_KEY or OPENAI_API_KEY from environment
                 // 2. Use anthropic() or openAI() provider in koogCompose block
                 // 3. For on-device: use FoundationModels via Swift bridge
-                val testProvider = createScriptedTestProvider()
                 val stateStore = KoogStateStore(QuickStartState())
                 
                 val session = createQuickStartSession(

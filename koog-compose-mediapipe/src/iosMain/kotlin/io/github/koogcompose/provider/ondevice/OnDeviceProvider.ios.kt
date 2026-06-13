@@ -79,6 +79,9 @@ public actual class OnDeviceProvider public actual constructor(
         }
     }
 
+    public actual fun executeStreamingRaw(prompt: OnDevicePrompt): Flow<String> =
+        executeStreaming(prompt)
+
     public actual fun close() {}
 
     private fun requireBridge(): AppleFoundationModelsBridge =

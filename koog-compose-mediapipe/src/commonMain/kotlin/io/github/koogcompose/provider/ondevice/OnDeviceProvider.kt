@@ -70,6 +70,14 @@ public expect class OnDeviceProvider(
      */
     public fun executeStreaming(prompt: OnDevicePrompt): Flow<String>
 
+    /**
+     * Streams one raw model response without dispatching tool calls internally.
+     *
+     * The AIAgent bridge uses this so Koog's graph can observe tool calls,
+     * execute guarded tools, and route phase transitions itself.
+     */
+    public fun executeStreamingRaw(prompt: OnDevicePrompt): Flow<String>
+
     /** Releases the underlying engine. Call when the provider is no longer needed. */
     public fun close()
 }

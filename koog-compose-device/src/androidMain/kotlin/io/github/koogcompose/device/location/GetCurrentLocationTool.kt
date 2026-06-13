@@ -1,5 +1,6 @@
 package io.github.koogcompose.device.location
 
+import android.annotation.SuppressLint
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
@@ -29,57 +30,67 @@ public class GetCurrentLocationTool(
         "Reads the device's current latitude and longitude coordinates."
     override val permissionLevel: PermissionLevel = PermissionLevel.SENSITIVE
 
+    @SuppressLint("MissingPermission")
     override suspend fun execute(args: JsonObject): ToolResult {
-        if (!hasLocationPermission()) {
-            return ToolResult.Failure(
-                "Location permission not granted. Request ACCESS_FINE_LOCATION or ACCESS_COARSE_LOCATION first."
-            )
-        }
-
         return suspendCancellableCoroutine { continuation ->
             val cancellationTokenSource = CancellationTokenSource()
             continuation.invokeOnCancellation { cancellationTokenSource.cancel() }
+            val hasFineLocation = ContextCompat.checkSelfPermission(
+                appContext,
+                Manifest.permission.ACCESS_FINE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+            val hasCoarseLocation = ContextCompat.checkSelfPermission(
+                appContext,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
 
-            fusedLocationClient
-                .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellationTokenSource.token)
-                .addOnSuccessListener { location ->
-                    val result = if (location == null) {
-                        ToolResult.Failure("Current location unavailable")
-                    } else {
-                        ToolResult.Success(
-                            locationToolJson.encodeToString(
-                                JsonObject.serializer(),
-                                buildJsonObject {
-                                    put("latitude", location.latitude)
-                                    put("longitude", location.longitude)
-                                    put("accuracyMeters", location.accuracy.toDouble())
-                                    put("provider", location.provider ?: "unknown")
-                                    put("timestampMs", location.time)
-                                }
+            if (!hasFineLocation && !hasCoarseLocation) {
+                continuation.resume(
+                    ToolResult.Failure(
+                        "Location permission not granted. Request ACCESS_FINE_LOCATION or ACCESS_COARSE_LOCATION first."
+                    )
+                )
+                return@suspendCancellableCoroutine
+            }
+
+            try {
+                fusedLocationClient
+                    .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, cancellationTokenSource.token)
+                    .addOnSuccessListener { location ->
+                        val result = if (location == null) {
+                            ToolResult.Failure("Current location unavailable")
+                        } else {
+                            ToolResult.Success(
+                                locationToolJson.encodeToString(
+                                    JsonObject.serializer(),
+                                    buildJsonObject {
+                                        put("latitude", location.latitude)
+                                        put("longitude", location.longitude)
+                                        put("accuracyMeters", location.accuracy.toDouble())
+                                        put("provider", location.provider ?: "unknown")
+                                        put("timestampMs", location.time)
+                                    }
+                                )
                             )
+                        }
+                        continuation.resume(result)
+                    }
+                    .addOnFailureListener { error ->
+                        continuation.resume(
+                            ToolResult.Failure(error.message ?: "Failed to read current location")
                         )
                     }
-                    continuation.resume(result)
-                }
-                .addOnFailureListener { error ->
-                    continuation.resume(
-                        ToolResult.Failure(error.message ?: "Failed to read current location")
-                    )
-                }
+            } catch (error: SecurityException) {
+                continuation.resume(
+                    ToolResult.Failure(error.message ?: "Location permission was revoked")
+                )
+            }
         }
     }
 
     override fun confirmationMessage(args: JsonObject): String =
         "Allow the assistant to access this device's current location?"
 
-    private fun hasLocationPermission(): Boolean {
-        return hasPermission(Manifest.permission.ACCESS_FINE_LOCATION) ||
-            hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
-    }
-
-    private fun hasPermission(permission: String): Boolean {
-        return ContextCompat.checkSelfPermission(appContext, permission) == PackageManager.PERMISSION_GRANTED
-    }
 }
 
 private val locationToolJson = Json { encodeDefaults = true }
