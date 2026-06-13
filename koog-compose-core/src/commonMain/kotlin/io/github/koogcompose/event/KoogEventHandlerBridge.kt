@@ -74,7 +74,7 @@ internal fun EventHandlerConfig.installKoogEventHandlers(
                     timestampMs = Clock.System.now().toEpochMilliseconds(),
                     turnId = turnIdProvider(),
                     phaseName = phaseName(),
-                    message = eventContext.throwable.message ?: "Unknown error"
+                    message = eventContext.error.message ?: "Unknown error"
                 )
             )
         }

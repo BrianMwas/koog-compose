@@ -1,7 +1,7 @@
 package io.github.koogcompose.session
 
 import ai.koog.agents.core.agent.config.AIAgentConfig
-import ai.koog.agents.core.agent.entity.AIAgentStorageKey
+import ai.koog.agents.core.agent.entity.createStorageKey
 import ai.koog.agents.core.feature.AIAgentFunctionalFeature
 import ai.koog.agents.core.feature.AIAgentGraphFeature
 import ai.koog.agents.core.feature.AIAgentPlannerFeature
@@ -43,7 +43,7 @@ internal class StreamingFeature(
         AIAgentFunctionalFeature<StreamingFeatureConfig, StreamingFeature>,
         AIAgentPlannerFeature<StreamingFeatureConfig, StreamingFeature> {
 
-        override val key = AIAgentStorageKey<StreamingFeature>("koog-compose-streaming")
+        override val key = createStorageKey<StreamingFeature>("koog-compose-streaming")
 
         override fun createInitialConfig(agentConfig: AIAgentConfig) = StreamingFeatureConfig()
 
