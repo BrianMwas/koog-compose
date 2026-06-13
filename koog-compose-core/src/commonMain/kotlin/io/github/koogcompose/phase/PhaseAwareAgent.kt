@@ -207,6 +207,7 @@ public object PhaseAwareAgent {
                     install(StreamingFeature) {
                         this.tokenSink = tokenSink
                         this.coroutineScope = coroutineScope
+                        this.layoutProcessor = layoutProcessor
                     }
                 }
 
