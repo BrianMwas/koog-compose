@@ -275,7 +275,7 @@ private fun WorkflowDefinitionDto.toDefinition(
     for (triggerDto in triggers) {
         trigger(TriggerId(triggerDto.id)) {
             displayName = triggerDto.displayName
-            activeIn(*triggerDto.activeInPhases.map { PhaseId(it) }.toTypedArray())
+            activeIn(triggerDto.activeInPhases.map { PhaseId(it) })
             triggerDto.source.applyTo(this, triggerDto.id)
         }
     }

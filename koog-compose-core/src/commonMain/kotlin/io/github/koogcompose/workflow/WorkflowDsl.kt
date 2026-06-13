@@ -139,7 +139,7 @@ public class TriggerBuilder internal constructor(private val id: TriggerId) {
     private var activeInPhases: Set<PhaseId> = emptySet()
     private var source: TriggerSource? = null
 
-    public fun activeIn(vararg phases: PhaseId) { activeInPhases = phases.toSet() }
+    public fun activeIn(phases: Collection<PhaseId>) { activeInPhases = phases.toSet() }
     public fun fromInterval(seconds: Int) { source = TriggerSource.Interval(seconds) }
     public fun fromUserAction(actionId: String) { source = TriggerSource.UserAction(actionId) }
     public fun fromDataChange(signalKey: String) { source = TriggerSource.DataChange(signalKey) }

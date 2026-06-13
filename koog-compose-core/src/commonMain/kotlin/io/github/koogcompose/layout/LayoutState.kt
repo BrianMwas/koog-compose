@@ -1,6 +1,6 @@
 package io.github.koogcompose.layout
 
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 
 /**
  * Immutable snapshot of a single component's occupancy in a slot.

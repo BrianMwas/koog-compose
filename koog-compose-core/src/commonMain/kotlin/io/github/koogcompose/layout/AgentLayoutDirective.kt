@@ -1,7 +1,7 @@
 package io.github.koogcompose.layout
 
-import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
+import kotlin.time.Clock
+import kotlin.time.Instant
 import kotlin.jvm.JvmInline
 
 /** Stable identifier for a single directive emission, used for tracing and correlation. */
