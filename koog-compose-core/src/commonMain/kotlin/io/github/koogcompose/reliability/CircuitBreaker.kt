@@ -34,6 +34,7 @@ public class CircuitBreaker(
     internal val failureThreshold: Int = 5,
     internal val cooldownMs: Long = 60_000,
     internal val successThreshold: Int = 2,
+    private val nowMs: () -> Long = ::currentTimeMs,
 ) {
     internal enum class State { CLOSED, OPEN, HALF_OPEN }
 
@@ -42,6 +43,7 @@ public class CircuitBreaker(
     internal var successCount = 0
     internal var openedAtMs = 0L
     internal val mutex = Mutex()
+    internal fun currentTimeMs(): Long = nowMs()
 
     /**
      * Wraps a call with circuit breaker protection.
@@ -147,7 +149,7 @@ public class CircuitBreakerGuard(
         circuitBreaker.mutex.withLock {
             when (circuitBreaker.state) {
                 CircuitBreaker.State.OPEN -> {
-                    val now = currentTimeMs()
+                    val now = circuitBreaker.currentTimeMs()
                     if (now - circuitBreaker.openedAtMs >= circuitBreaker.cooldownMs) {
                         circuitBreaker.state = CircuitBreaker.State.HALF_OPEN
                         circuitBreaker.successCount = 0

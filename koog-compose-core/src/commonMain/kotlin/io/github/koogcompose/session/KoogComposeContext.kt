@@ -15,6 +15,7 @@ import io.github.koogcompose.phase.toTool
 import io.github.koogcompose.prompt.PromptStack
 import io.github.koogcompose.provider.AIProvider
 import io.github.koogcompose.provider.KoogAIProvider
+import io.github.koogcompose.provider.PromptExecutorRuntimeRegistry
 import io.github.koogcompose.provider.ProviderRuntimeRegistry
 import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.provider.ProviderConfigBuilder
@@ -309,7 +310,8 @@ public data class KoogComposeContext<S>(
      * Use this when constructing [PhaseSession] outside of the convenience DSL.
      */
     override fun createExecutor(): ai.koog.prompt.executor.model.PromptExecutor =
-        io.github.koogcompose.provider.buildExecutor(providerConfig)
+        PromptExecutorRuntimeRegistry.create(this)
+            ?: io.github.koogcompose.provider.buildExecutor(providerConfig)
 
     public val activePhase: Phase? get() = activePhaseName?.let { phaseRegistry.resolve(it) }
 

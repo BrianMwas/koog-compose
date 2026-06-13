@@ -87,7 +87,7 @@ class RecordConceptTool(
     override val description = "Record a concept the student has mastered"
     override val permissionLevel = PermissionLevel.SAFE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val concept = args["concept"]?.jsonPrimitive?.contentOrNull ?: "unknown"
         stateStore.update {
             it.copy(
@@ -110,7 +110,7 @@ class AdjustDifficultyTool(
     override val description = "Adjust teaching difficulty based on student performance"
     override val permissionLevel = PermissionLevel.SAFE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val direction = args["direction"]?.jsonPrimitive?.contentOrNull
         val newDifficulty = when (direction) {
             "easier" -> Difficulty.values().getOrNull(
@@ -133,7 +133,7 @@ class TrackProgressTool(
     override val description = "Track whether the student answered correctly or needs help"
     override val permissionLevel = PermissionLevel.SAFE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val correct = args["correct"]?.jsonPrimitive?.contentOrNull?.toBoolean() ?: false
         stateStore.update {
             it.copy(
@@ -156,7 +156,7 @@ class SaveTopicPhotoTool(
         "The photo is saved and referenced in the session."
     override val permissionLevel = PermissionLevel.SENSITIVE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val uri = registry.capturePhoto()
             ?: return ToolResult.Denied("Photo capture was cancelled")
 

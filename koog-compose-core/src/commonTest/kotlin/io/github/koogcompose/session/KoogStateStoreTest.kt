@@ -5,6 +5,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class KoogStateStoreTest {
 
@@ -38,7 +39,7 @@ class KoogStateStoreTest {
         // Final value should be either -1 (from a set) or some positive number
         // from increments — never a corrupted partial value
         val final = store.stateFlow.value.counter
-        assert(final == -1 || final > 0) { "Expected -1 or >0, got $final" }
+        assertTrue(final == -1 || final > 0, "Expected -1 or >0, got $final")
     }
 
     @Test

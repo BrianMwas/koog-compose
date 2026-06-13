@@ -65,10 +65,10 @@ internal class HandleBackedChatSession(
     private val _events = MutableSharedFlow<KoogEvent>(extraBufferCapacity = 128)
     override val events: SharedFlow<KoogEvent> = _events.asSharedFlow()
 
-    override val permissionManager: PermissionManager = PermissionManager(
-        auditLogger                     = AuditLogger(),
+    override val permissionManager: PermissionManager = handle.permissionManager ?: PermissionManager(
+        auditLogger = AuditLogger(),
         requireConfirmationForSensitive = false,
-        userId                          = null,
+        userId = null,
     )
 
     init {

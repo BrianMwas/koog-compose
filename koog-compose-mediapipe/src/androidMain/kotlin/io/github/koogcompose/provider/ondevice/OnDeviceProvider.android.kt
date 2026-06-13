@@ -107,6 +107,21 @@ public actual class OnDeviceProvider public actual constructor(
         awaitClose { conversation.close() }
     }
 
+    public actual fun executeStreamingRaw(prompt: OnDevicePrompt): Flow<String> = callbackFlow {
+        val conversation = engine.createConversation(buildConversationConfig(prompt))
+
+        try {
+            conversation.sendMessageAsync(prompt.user).collect { message ->
+                trySend(message.toString())
+            }
+        } finally {
+            conversation.close()
+            close()
+        }
+
+        awaitClose { conversation.close() }
+    }
+
     public actual fun close() {
         runCatching { engine.close() }
     }
