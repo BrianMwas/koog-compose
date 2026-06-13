@@ -6,6 +6,8 @@ import io.github.koogcompose.event.EventHandlers
 import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.observability.AgentEvent
 import io.github.koogcompose.phase.PhaseAwareAgent
+import io.github.koogcompose.security.AuditLogger
+import io.github.koogcompose.security.PermissionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -100,6 +102,12 @@ public class PhaseSession<S>(
     override val toolCallCounts: StateFlow<Map<String, Int>> = _toolCallCounts.asStateFlow()
 
     public val appState: StateFlow<S>? = context.stateStore?.stateFlow
+
+    override val permissionManager: PermissionManager = PermissionManager(
+        auditLogger = AuditLogger(),
+        requireConfirmationForSensitive = true,
+        userId = null,
+    )
 
     // ── Stuck detection tracking ───────────────────────────────────────────
     private var lastPhaseInput: String? = null
@@ -401,6 +409,7 @@ public class PhaseSession<S>(
             eventHandlers  = turnEventHandlers,
             currentTurnId  = { _turnId.value.toString() },
             coroutineScope = scope,
+            permissionManager = permissionManager,
         )
     }
 }

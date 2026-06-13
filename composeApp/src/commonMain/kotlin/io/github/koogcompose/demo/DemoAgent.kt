@@ -21,7 +21,7 @@ class GreetUserTool(
     override val description: String = "Record the user's name and greet them"
     override val permissionLevel: PermissionLevel = PermissionLevel.SAFE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val userName = args["name"]?.jsonPrimitive?.contentOrNull ?: "Friend"
         stateStore.update { it.copy(userName = userName, greetingShown = true) }
         return ToolResult.Success("Hello, $userName! Welcome to koog-compose.")
@@ -39,7 +39,7 @@ class TrackTopicTool(
     override val description: String = "Track the current conversation topic"
     override val permissionLevel: PermissionLevel = PermissionLevel.SAFE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val topic = args["topic"]?.jsonPrimitive?.contentOrNull ?: "general"
         stateStore.update { it.copy(lastTopic = topic) }
         return ToolResult.Success("Topic tracked: $topic")

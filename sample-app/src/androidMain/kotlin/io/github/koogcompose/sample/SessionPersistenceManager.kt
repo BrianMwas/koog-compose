@@ -1,11 +1,11 @@
 package io.github.koogcompose.sample
 
 import android.content.Context
-import androidx.room.Room
 import io.github.koogcompose.session.room.RoomSessionStore
 import io.github.koogcompose.session.room.KoogSessionDao
 import io.github.koogcompose.session.room.KoogDatabase
-import kotlinx.serialization.Serializable
+import io.github.koogcompose.session.room.createKoogDatabase
+import io.github.koogcompose.session.room.getDatabaseBuilder
 import kotlinx.serialization.serializer
 
 /**
@@ -14,11 +14,7 @@ import kotlinx.serialization.serializer
  */
 class SessionPersistenceManager(context: Context) {
 
-    private val database: KoogDatabase = Room.databaseBuilder(
-        context = context.applicationContext,
-        klass   = KoogDatabase::class.java,
-        name    = "teaching_sessions.db",
-    ).build()
+    private val database: KoogDatabase = createKoogDatabase(getDatabaseBuilder(context))
 
     private val koogDao: KoogSessionDao = database.koogSessionDao()
 

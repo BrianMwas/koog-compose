@@ -2,6 +2,7 @@ package io.github.koogcompose.phase
 
 import ai.koog.agents.core.agent.entity.AIAgentSubgraph
 import ai.koog.agents.core.agent.entity.AIAgentGraphStrategy
+import ai.koog.agents.core.dsl.builder.AIAgentNodeDelegate
 import ai.koog.agents.core.dsl.builder.node
 import ai.koog.agents.core.dsl.builder.strategy
 import ai.koog.agents.core.dsl.builder.subgraph
@@ -17,10 +18,13 @@ import ai.koog.agents.core.dsl.extension.onAssistantMessage
 import ai.koog.agents.core.dsl.extension.onToolCall
 import ai.koog.agents.core.dsl.extension.onMultipleToolCalls
 import ai.koog.agents.core.environment.ReceivedToolResult
+import ai.koog.agents.core.environment.result
 import ai.koog.agents.memory.feature.history.RetrieveFactsFromHistory
 import ai.koog.agents.memory.model.Concept
 import ai.koog.agents.memory.model.FactType
 import ai.koog.prompt.message.Message
+import ai.koog.prompt.message.RequestMetaInfo
+import io.github.koogcompose.session.ContextCondition
 import io.github.koogcompose.observability.EventSink
 import io.github.koogcompose.security.GuardrailEnforcer
 import io.github.koogcompose.session.CompressionTrigger
@@ -28,6 +32,9 @@ import io.github.koogcompose.session.HistoryCompression
 import io.github.koogcompose.session.HistoryCompressionConfig
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.tool.toGuardedKoogTool
+import kotlin.time.Clock
+
+internal const val PHASE_SYSTEM_MARKER: String = "[koog-compose phase instructions]"
 
 /**
  * Builds the Koog graph strategy that mediates between phase definitions and the agent runtime.
@@ -44,13 +51,13 @@ import io.github.koogcompose.tool.toGuardedKoogTool
  * [KoogComposeContext.config.historyCompression] is configured.
  */
 internal object PhaseStrategyBuilder {
-
     internal fun build(
         context: KoogComposeContext<*>,
         strategyName: String = "koog-compose-phase-strategy",
         enforcer: GuardrailEnforcer?,
         sessionId: String,
         eventSink: EventSink,
+        onPhaseTransition: (fromPhaseName: String, toPhaseName: String, toolCallId: String?) -> Unit = { _, _, _ -> },
     ): AIAgentGraphStrategy<String, String> {
         val phases = context.phaseRegistry.all
         require(phases.isNotEmpty()) {
@@ -69,32 +76,38 @@ internal object PhaseStrategyBuilder {
             phases.forEach { phase ->
                 val phaseSubgraph = when {
                     phase.hasParallel -> buildParallelSubgraph(
+                        context,
                         phase,
                         compressionConfig,
                         koogCompressionStrategy,
                         enforcer,
                         sessionId,
                         eventSink,
+                        onPhaseTransition,
                         getPending = { pendingPhaseName },
                         setPending = { pendingPhaseName = it }
                     )
                     phase.hasSubphases -> buildMultiStepSubgraph(
+                        context,
                         phase,
                         compressionConfig,
                         koogCompressionStrategy,
                         enforcer,
                         sessionId,
                         eventSink,
+                        onPhaseTransition,
                         getPending = { pendingPhaseName },
                         setPending = { pendingPhaseName = it }
                     )
                     else -> buildFlatSubgraph(
+                        context,
                         phase,
                         compressionConfig,
                         koogCompressionStrategy,
                         enforcer,
                         sessionId,
                         eventSink,
+                        onPhaseTransition,
                         getPending = { pendingPhaseName },
                         setPending = { pendingPhaseName = it }
                     )
@@ -149,12 +162,14 @@ internal object PhaseStrategyBuilder {
      * to write their output to `stateStore.update { }` directly.
      */
     private fun StrategyBuilder.buildParallelSubgraph(
+        context: KoogComposeContext<*>,
         phase: Phase,
         compressionConfig: HistoryCompressionConfig?,
         koogCompressionStrategy: HistoryCompressionStrategy?,
         enforcer: GuardrailEnforcer?,
         sessionId: String,
         eventSink: EventSink,
+        onPhaseTransition: (fromPhaseName: String, toPhaseName: String, toolCallId: String?) -> Unit,
         getPending: () -> String?,
         setPending: (String?) -> Unit,
     ): AIAgentSubgraph<String, String> {
@@ -164,9 +179,24 @@ internal object PhaseStrategyBuilder {
             .map { it.toGuardedKoogTool(enforcer, sessionId, eventSink) }
 
         val parent by subgraph<String, String>(name = phase.name, tools = allBranchTools) {
+            var phaseInput = ""
+            val nodeApplyPhasePrompt by phasePromptNode(context, phase) { input ->
+                phaseInput = input
+                if (getPending() == phase.name) setPending(null)
+            }
             val nodeCallLLM by nodeLLMRequestMultiple("${phase.name}_llm_parallel")
             val nodeExecuteTools by nodeExecuteMultipleTools("${phase.name}_exec_parallel", parallelTools = true)
             val nodeSendToolResults by nodeLLMSendMultipleToolResults("${phase.name}_results")
+            val nodeFinishTransition by node<List<ReceivedToolResult>, String>("${phase.name}_transition_finish") { toolResults ->
+                llm.writeSession {
+                    appendPrompt {
+                        tool {
+                            toolResults.forEach { result(it) }
+                        }
+                    }
+                }
+                phaseInput
+            }
 
             val nodeCompress by nodeLLMCompressHistory<List<ReceivedToolResult>>(
                 name = "${phase.name}_compress",
@@ -177,7 +207,10 @@ internal object PhaseStrategyBuilder {
                 for (toolCall in toolCalls) {
                     for (branch in phase.parallelGroups.flatten()) {
                         val transition = branch.transitions.firstOrNull { it.toolName == toolCall.tool }
-                        if (transition != null) setPending(transition.targetPhase)
+                        if (transition != null) {
+                            setPending(transition.targetPhase)
+                            onPhaseTransition(branch.name, transition.targetPhase, toolCall.id)
+                        }
                     }
                 }
                 return true
@@ -188,7 +221,11 @@ internal object PhaseStrategyBuilder {
                 return compressionConfig.shouldCompressAfterTool()
             }
 
-            edge(nodeStart forwardTo nodeCallLLM)
+            fun hasPendingTransition(): Boolean =
+                getPending() != null && getPending() != phase.name
+
+            edge(nodeStart forwardTo nodeApplyPhasePrompt)
+            edge(nodeApplyPhasePrompt forwardTo nodeCallLLM)
 
             // LLM responded with assistant message (no tool calls) → finish
             edge(
@@ -203,13 +240,18 @@ internal object PhaseStrategyBuilder {
             )
 
             edge(
+                (nodeExecuteTools forwardTo nodeFinishTransition)
+                    .onCondition { _ -> hasPendingTransition() }
+            )
+            edge(nodeFinishTransition forwardTo nodeFinish)
+            edge(
                 (nodeExecuteTools forwardTo nodeCompress)
-                    .onCondition { _ -> shouldCompress() }
+                    .onCondition { _ -> !hasPendingTransition() && shouldCompress() }
             )
             edge(nodeCompress forwardTo nodeSendToolResults)
             edge(
                 (nodeExecuteTools forwardTo nodeSendToolResults)
-                    .onCondition { _ -> !shouldCompress() }
+                    .onCondition { _ -> !hasPendingTransition() && !shouldCompress() }
             )
 
             // After sending results, LLM may respond with text or call more tools
@@ -237,18 +279,31 @@ internal object PhaseStrategyBuilder {
      * after all subphases have run.
      */
     private fun StrategyBuilder.buildMultiStepSubgraph(
+        context: KoogComposeContext<*>,
         phase: Phase,
         compressionConfig: HistoryCompressionConfig?,
         koogCompressionStrategy: HistoryCompressionStrategy?,
         enforcer: GuardrailEnforcer?,
         sessionId: String,
         eventSink: EventSink,
+        onPhaseTransition: (fromPhaseName: String, toPhaseName: String, toolCallId: String?) -> Unit,
         getPending: () -> String?,
         setPending: (String?) -> Unit,
     ): AIAgentSubgraph<String, String> {
         // Build each subphase as its own flat subgraph
         val subgraphList = phase.subphases.map { sub ->
-            buildFlatSubgraph(sub, compressionConfig, koogCompressionStrategy, enforcer, sessionId, eventSink, getPending, setPending)
+            buildFlatSubgraph(
+                context,
+                sub,
+                compressionConfig,
+                koogCompressionStrategy,
+                enforcer,
+                sessionId,
+                eventSink,
+                onPhaseTransition,
+                getPending,
+                setPending
+            )
         }
 
         // Wrap them in a parent subgraph that chains them sequentially
@@ -285,12 +340,14 @@ internal object PhaseStrategyBuilder {
      * so [buildMultiStepSubgraph] can reuse it for individual subphases.
      */
     private fun StrategyBuilder.buildFlatSubgraph(
+        context: KoogComposeContext<*>,
         phase: Phase,
         compressionConfig: HistoryCompressionConfig?,
         koogCompressionStrategy: HistoryCompressionStrategy?,
         enforcer: GuardrailEnforcer?,
         sessionId: String,
         eventSink: EventSink,
+        onPhaseTransition: (fromPhaseName: String, toPhaseName: String, toolCallId: String?) -> Unit,
         getPending: () -> String?,
         setPending: (String?) -> Unit,
     ): AIAgentSubgraph<String, String> {
@@ -300,9 +357,24 @@ internal object PhaseStrategyBuilder {
             name = phase.name,
             tools = phaseTools
         ) {
+            var phaseInput = ""
+            val nodeApplyPhasePrompt by phasePromptNode(context, phase) { input ->
+                phaseInput = input
+                if (getPending() == phase.name) setPending(null)
+            }
             val nodeCallLLM by nodeLLMRequest("${phase.name}_llm")
             val nodeExecuteTool by nodeExecuteTool("${phase.name}_exec")
             val nodeSendToolResult by nodeLLMSendToolResult("${phase.name}_result")
+            val nodeFinishTransition by node<ReceivedToolResult, String>("${phase.name}_transition_finish") { toolResult ->
+                llm.writeSession {
+                    appendPrompt {
+                        tool {
+                            result(toolResult)
+                        }
+                    }
+                }
+                phaseInput
+            }
 
             // Only create the compression node when compression is configured
             // AND the trigger includes message-count compression.
@@ -313,7 +385,10 @@ internal object PhaseStrategyBuilder {
 
             fun captureTransition(toolCall: Message.Tool.Call): Boolean {
                 val transition = phase.transitions.firstOrNull { it.toolName == toolCall.tool }
-                if (transition != null) setPending(transition.targetPhase)
+                if (transition != null) {
+                    setPending(transition.targetPhase)
+                    onPhaseTransition(phase.name, transition.targetPhase, toolCall.id)
+                }
                 return true
             }
 
@@ -322,7 +397,11 @@ internal object PhaseStrategyBuilder {
                 return compressionConfig.shouldCompressAfterTool()
             }
 
-            edge(nodeStart forwardTo nodeCallLLM)
+            fun hasPendingTransition(): Boolean =
+                getPending() != null && getPending() != phase.name
+
+            edge(nodeStart forwardTo nodeApplyPhasePrompt)
+            edge(nodeApplyPhasePrompt forwardTo nodeCallLLM)
 
             // LLM responded with assistant message (no tool calls) → finish
             edge(
@@ -337,13 +416,18 @@ internal object PhaseStrategyBuilder {
             )
 
             edge(
+                (nodeExecuteTool forwardTo nodeFinishTransition)
+                    .onCondition { _ -> hasPendingTransition() }
+            )
+            edge(nodeFinishTransition forwardTo nodeFinish)
+            edge(
                 (nodeExecuteTool forwardTo nodeCompress)
-                    .onCondition { _ -> shouldCompress() }
+                    .onCondition { _ -> !hasPendingTransition() && shouldCompress() }
             )
             edge(nodeCompress forwardTo nodeSendToolResult)
             edge(
                 (nodeExecuteTool forwardTo nodeSendToolResult)
-                    .onCondition { _ -> !shouldCompress() }
+                    .onCondition { _ -> !hasPendingTransition() && !shouldCompress() }
             )
 
             // After sending tool result, LLM may respond with text or call more tools
@@ -358,6 +442,57 @@ internal object PhaseStrategyBuilder {
         }
 
         return phaseSubgraph
+    }
+
+    private fun phasePromptNode(
+        context: KoogComposeContext<*>,
+        phase: Phase,
+        onInput: (String) -> Unit = {},
+    ): AIAgentNodeDelegate<String, String> {
+        val instructions = context.effectiveInstructionsFor(phase)
+        return node("${phase.name}_phase_prompt") { input ->
+            onInput(input)
+            llm.writeSession {
+                rewritePrompt { current ->
+                    current.withMessages { messages ->
+                        val withoutPreviousPhaseSystem = messages.filterNot { message ->
+                            message is Message.System && message.content.startsWith(PHASE_SYSTEM_MARKER)
+                        }
+                        listOf(
+                            Message.System(
+                                "$PHASE_SYSTEM_MARKER\n$instructions",
+                                RequestMetaInfo.create(Clock.System),
+                            )
+                        ) + withoutPreviousPhaseSystem
+                    }
+                }
+            }
+            input
+        }
+    }
+
+    private fun KoogComposeContext<*>.effectiveInstructionsFor(phase: Phase): String {
+        val globalPrompt = promptStack.resolve().trim()
+        val parts = buildList {
+            if (globalPrompt.isNotBlank()) add(globalPrompt)
+
+            add("CURRENT PHASE: ${phase.name}")
+            if (phase.resolvedInstructions.isNotBlank()) {
+                add(phase.resolvedInstructions.trim())
+            }
+
+            contextualInstructions
+                .filter { instruction ->
+                    when (val condition = instruction.condition) {
+                        is ContextCondition.Always -> true
+                        is ContextCondition.WhenPhase -> condition.phaseName == phase.name
+                        is ContextCondition.WhenBlocked -> false
+                    }
+                }
+                .forEach { add(it.content.trim()) }
+        }
+
+        return parts.joinToString(separator = "\n\n")
     }
 }
 

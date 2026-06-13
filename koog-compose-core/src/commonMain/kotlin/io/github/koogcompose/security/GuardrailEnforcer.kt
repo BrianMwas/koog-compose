@@ -1,6 +1,6 @@
 package io.github.koogcompose.security
 
-import io.github.koogcompose.tool.PermissionLevel
+import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolResult
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -26,15 +26,13 @@ internal class GuardrailEnforcer(
     // Tracks currently scheduled jobs (for maxScheduledJobs enforcement)
     private var activeJobCount = 0
 
-    // In GuardrailEnforcer
-    internal var onConfirmationRequired: suspend (toolName: String, message: String, level: PermissionLevel) -> Boolean =
-        { _, _, _ -> true } // default: auto-approve, override in ViewModel
+    internal var onConfirmationRequired: suspend (tool: SecureTool, args: JsonObject) -> Boolean =
+        { _, _ -> false }
 
     suspend fun requestConfirmation(
-        toolName: String,
-        message: String,
-        level: PermissionLevel
-    ): Boolean = onConfirmationRequired(toolName, message, level)
+        tool: SecureTool,
+        args: JsonObject,
+    ): Boolean = onConfirmationRequired(tool, args)
     /**
      * Validates a tool call against defined guardrails.
      * @return [ToolResult.Denied] if guardrails are violated, null otherwise.

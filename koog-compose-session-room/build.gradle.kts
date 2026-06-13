@@ -20,8 +20,8 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(project(":koog-compose-core"))
-            implementation(libs.androidx.room.runtime)
-            implementation(libs.androidx.sqlite.bundled)
+            api(libs.androidx.room.runtime)
+            api(libs.androidx.sqlite.bundled)
             implementation(libs.kotlinx.datetime)
             implementation(libs.kotlinx.serialization.json)
         }

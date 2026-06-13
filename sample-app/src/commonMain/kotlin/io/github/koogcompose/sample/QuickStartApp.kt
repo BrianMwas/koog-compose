@@ -2,6 +2,7 @@ package io.github.koogcompose.sample
 
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Card
@@ -27,13 +28,11 @@ import io.github.koogcompose.tool.ToolResult
 import io.github.koogcompose.ui.components.ChatInputBar
 import io.github.koogcompose.ui.components.ChatMessageList
 import io.github.koogcompose.ui.state.rememberChatState
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlin.time.Clock
 
 /**
  * Simple cross-platform tutor app that works on iOS and Android.
@@ -60,14 +59,12 @@ class RecordConceptToolQuickStart(
     override val description = "Record a concept the student has learned"
     override val permissionLevel = PermissionLevel.SAFE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val concept = args["concept"]?.jsonPrimitive?.contentOrNull ?: "unknown concept"
         stateStore.update {
             it.copy(conceptsCovered = it.conceptsCovered + concept)
         }
-        return ToolResult.Success(
-            message = "✓ Concept recorded: $concept"
-        )
+        return ToolResult.Success("✓ Concept recorded: $concept")
     }
 }
 
@@ -78,14 +75,12 @@ class UpdateNameToolQuickStart(
     override val description = "Record the student's name"
     override val permissionLevel = PermissionLevel.SAFE
 
-    override suspend fun execute(args: JsonObject): ToolResult {
+    override suspend fun executeInternal(args: JsonObject): ToolResult {
         val name = args["name"]?.jsonPrimitive?.contentOrNull ?: "Friend"
         stateStore.update {
             it.copy(studentName = name)
         }
-        return ToolResult.Success(
-            message = "✓ Nice to meet you, $name!"
-        )
+        return ToolResult.Success("✓ Nice to meet you, $name!")
     }
 }
 
@@ -104,7 +99,7 @@ suspend fun createQuickStartSession(
     val recordConcept = RecordConceptToolQuickStart(stateStore)
     val updateName = UpdateNameToolQuickStart(stateStore)
 
-    val context: KoogComposeContext<QuickStartState> = koogCompose<QuickStartState> {
+    val context = koogCompose<QuickStartState> {
         // Use the scripted test provider
         provider {
             ollama(model = "test-model")
@@ -164,13 +159,13 @@ suspend fun createQuickStartSession(
                 }
             }
         }
-    }
+    } as KoogComposeContext<QuickStartState>
 
     val executor = context.createExecutor()
     return PhaseSession(
         context = context,
         executor = executor,
-        sessionId = "quickstart_${io.github.koogcompose.observability.currentTimeMs()}",
+        sessionId = "quickstart_${Clock.System.now().toEpochMilliseconds()}",
     )
 }
 
@@ -184,8 +179,8 @@ fun QuickStartAppUI(
     session: PhaseSession<QuickStartState>,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
-    val chatState = rememberChatState(session)
-    val state by session.state.collectAsState()
+    val chatState = rememberChatState(handle = session, context = session.context)
+    val state by requireNotNull(session.appState).collectAsState()
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
@@ -226,7 +221,7 @@ fun QuickStartAppUI(
 
                 // Chat area
                 ChatMessageList(
-                    session = session,
+                    chatState = chatState,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxSize(),
@@ -235,9 +230,6 @@ fun QuickStartAppUI(
                 // Input bar
                 ChatInputBar(
                     chatState = chatState,
-                    onSendMessage = { message ->
-                        chatState.sendMessage(message)
-                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

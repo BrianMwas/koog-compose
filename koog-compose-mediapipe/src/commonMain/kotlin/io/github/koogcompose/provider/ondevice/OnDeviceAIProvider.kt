@@ -1,6 +1,7 @@
 package io.github.koogcompose.provider.ondevice
 
 import io.github.koogcompose.provider.AIProvider
+import io.github.koogcompose.provider.PromptExecutorRuntimeRegistry
 import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.provider.ProviderRuntimeRegistry
 import io.github.koogcompose.session.AIResponseChunk
@@ -109,6 +110,13 @@ private object OnDeviceProviderRuntimeSupport {
         ProviderRuntimeRegistry.register { context ->
             if (context.providerConfig is ProviderConfig.OnDevice) {
                 OnDeviceAIProvider()
+            } else {
+                null
+            }
+        }
+        PromptExecutorRuntimeRegistry.register { context ->
+            if (context.providerConfig is ProviderConfig.OnDevice) {
+                OnDevicePromptExecutor(context)
             } else {
                 null
             }

@@ -10,7 +10,6 @@ import io.github.koogcompose.session.KoogConfig
 import io.github.koogcompose.session.KoogStateStore
 import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.tool.SecureTool
-import io.github.koogcompose.tool.StatefulTool
 import io.github.koogcompose.tool.ToolRegistry
 import io.github.koogcompose.tool.ToolResult
 import kotlin.test.Test
@@ -32,6 +31,8 @@ class TestPhaseSessionTest {
         val session = testPhaseSession(context) {
             on("I need help with my location", phase = "greeting") {
                 transitionTo("location_check")
+            }
+            on("I need help with my location", phase = "location_check") {
                 callTool("RecordLocationIntent")
                 respondWith("Sure, fetching location now.")
             }
@@ -77,6 +78,8 @@ class TestPhaseSessionTest {
         val session = testPhaseSession(context) {
             on("Get my location", phase = "greeting") {
                 transitionTo("location_check")
+            }
+            on("Get my location", phase = "location_check") {
                 callTool("RecordLocationIntent")
                 respondWith("I could not access location.")
             }
@@ -110,6 +113,8 @@ class TestPhaseSessionTest {
         ) {
             on("Share my location", phase = "greeting") {
                 transitionTo("location_check")
+            }
+            on("Share my location", phase = "location_check") {
                 callTool("RecordLocationIntent")
                 respondWith("I could not access location.")
             }
@@ -175,9 +180,9 @@ private enum class TestIntent {
 }
 
 private class RecordLocationIntentTool(
-    override val stateStore: KoogStateStore<TestAppState>,
+    private val stateStore: KoogStateStore<TestAppState>,
     override val permissionLevel: PermissionLevel = PermissionLevel.SAFE
-) : StatefulTool<TestAppState>() {
+) : SecureTool {
     override val name: String = "RecordLocationIntent"
     override val description: String = "Marks the current app state as a location request."
 

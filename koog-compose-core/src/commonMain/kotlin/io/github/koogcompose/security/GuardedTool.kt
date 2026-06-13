@@ -50,9 +50,8 @@ internal class GuardedTool(
         // 2. Permission gate — SENSITIVE/CRITICAL require confirmation
         if (delegate.permissionLevel != PermissionLevel.SAFE) {
             val confirmed = enforcer.requestConfirmation(
-                toolName = delegate.name,
-                message  = delegate.confirmationMessage(args),
-                level    = delegate.permissionLevel
+                tool = delegate,
+                args = args,
             )
             if (!confirmed) {
                 eventSink.emit(

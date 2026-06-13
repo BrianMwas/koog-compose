@@ -1,5 +1,6 @@
 package io.github.koogcompose.session
 
+import io.github.koogcompose.security.PermissionManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -68,6 +69,15 @@ public interface KoogSessionHandle {
      * Emits nothing between turns.
      */
     public val responseStream: Flow<String>
+
+    /**
+     * Optional tool confirmation manager for runtimes that execute guarded tools.
+     *
+     * UI adapters observe this to surface SENSITIVE/CRITICAL tool approvals for
+     * AIAgent-backed sessions.
+     */
+    public val permissionManager: PermissionManager?
+        get() = null
 
     /**
      * Sends a user message and starts a new agent turn.

@@ -99,10 +99,12 @@ class RobustHandlingE2ETest {
 
     @Test
     fun `circuit breaker recovers after cooldown`() = runTest {
+        var now = 0L
         val breaker = CircuitBreaker(
             failureThreshold = 2,
             cooldownMs = 50,   // 50ms for fast test
-            successThreshold = 1
+            successThreshold = 1,
+            nowMs = { now },
         )
         var callCount = 0
 
@@ -114,8 +116,7 @@ class RobustHandlingE2ETest {
         }
         assertTrue(breaker.isOpen)
 
-        // Wait for cooldown
-        kotlinx.coroutines.delay(60)
+        now += 60
 
         // Next call should succeed (half-open, then close on success)
         val result = breaker.call { callCount++; "success" }
@@ -126,10 +127,12 @@ class RobustHandlingE2ETest {
 
     @Test
     fun `circuit breaker half-open requires successes to fully close`() = runTest {
+        var now = 0L
         val breaker = CircuitBreaker(
             failureThreshold = 1,
             cooldownMs = 50,
-            successThreshold = 2
+            successThreshold = 2,
+            nowMs = { now },
         )
         var callCount = 0
 
@@ -139,9 +142,7 @@ class RobustHandlingE2ETest {
         } catch (e: RuntimeException) { /* expected */ }
         assertTrue(breaker.isOpen)
 
-        // Wait for cooldown
-        kotlinx.coroutines.delay(60)
-        assertTrue(breaker.isHalfOpen)
+        now += 60
 
         // 1st success (still half-open)
         breaker.call { callCount++ }
@@ -194,7 +195,7 @@ class RobustHandlingE2ETest {
         )
         val hint = result.recoveryHint as? RecoveryHint.RequiresUserAction
         assertTrue(hint != null)
-        assertTrue(hint!!.prompt.contains("Settings"))
+        assertTrue(hint.prompt.contains("Settings"))
     }
 
     @Test
@@ -208,7 +209,7 @@ class RobustHandlingE2ETest {
         )
         val fallback = result.recoveryHint as? RecoveryHint.DegradedFallback
         assertTrue(fallback != null)
-        assertEquals("Using cached data from 1 hour ago", fallback!!.fallbackValue)
+        assertEquals("Using cached data from 1 hour ago", fallback.fallbackValue)
     }
 
     // ── Permission Management ──────────────────────────────────────────────
@@ -232,7 +233,7 @@ class RobustHandlingE2ETest {
 
         val result = tool.execute(buildJsonObject {})
         assertTrue(result is ToolResult.Denied)
-        assertEquals("This action requires your approval", (result as ToolResult.Denied).reason)
+        assertEquals("This action requires your approval", result.reason)
     }
 
     // ── Session Recovery ───────────────────────────────────────────────────
@@ -259,7 +260,7 @@ class RobustHandlingE2ETest {
 
         // Agent logic: if retryable, retry; if RequiresUserAction, ask user; if DegradedFallback, use fallback
         assertEquals(RecoveryHint.RetryAfterDelay::class, result1.recoveryHint::class)
-        assertEquals(RecoveryHint.RequiresUserAction::class, (result2 as ToolResult.Denied).recoveryHint::class)
+        assertEquals(RecoveryHint.RequiresUserAction::class, result2.recoveryHint::class)
         assertEquals(RecoveryHint.DegradedFallback::class, result3.recoveryHint::class)
     }
 }

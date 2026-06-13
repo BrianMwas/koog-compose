@@ -104,6 +104,22 @@ public class PermissionManager(
     }
 
     /**
+     * Suspends until the user approves or denies [tool].
+     *
+     * This is used by the AIAgent guardrail bridge, where the confirmation gate
+     * happens before the guarded tool is allowed to execute.
+     */
+    public suspend fun requestApproval(
+        tool: SecureTool,
+        args: JsonObject,
+    ): Boolean {
+        val result = requestConfirmation(tool, args) {
+            ToolResult.Success("User confirmed ${tool.name}")
+        }
+        return result !is ToolResult.Denied
+    }
+
+    /**
      * Approves the currently pending tool execution.
      */
     public suspend fun onUserConfirmed(): ToolResult {

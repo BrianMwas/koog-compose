@@ -34,10 +34,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import io.github.koogcompose.litertlm.LiteRtLmProvider
+import io.github.koogcompose.provider.ondevice.installOnDeviceProviderSupport
 import io.github.koogcompose.session.Attachment
+import io.github.koogcompose.session.koogCompose
 import io.github.koogcompose.ui.components.ChatInputBar
 import io.github.koogcompose.ui.components.ChatMessageList
+import io.github.koogcompose.ui.rememberPhaseSession
 import io.github.koogcompose.ui.state.ChatState
 import io.github.koogcompose.ui.state.rememberChatState
 import kotlinx.coroutines.Dispatchers
@@ -103,21 +105,11 @@ fun MathTutorApp(
         return
     }
 
-    // 2. Build the AI provider
-    val provider = remember(modelPath) {
-        LiteRtLmProvider(
-            context = context,
-            modelPath = modelPath!!,
-        )
-    }
-
-    // 3. Build the chat state
-    val chatState = rememberChatState(
-        provider = provider,
-        context = io.github.koogcompose.session.KoogComposeContext<Unit> {
+    val agentDefinition = remember(modelPath) {
+        installOnDeviceProviderSupport()
+        koogCompose<Unit> {
             provider {
-                // Not used by LiteRtLmProvider — placeholder for DSL compatibility
-                ollama(model = "gemma3-1b-it")
+                onDevice(modelPath = modelPath!!)
             }
             phases {
                 phase("math_tutor", initial = true) {
@@ -133,8 +125,13 @@ fun MathTutorApp(
                     }
                 }
             }
-        },
-    )
+        }
+    }
+
+    val session = rememberPhaseSession(agentDefinition) {
+        sessionId = "math-tutor"
+    }
+    val chatState = rememberChatState(handle = session, context = session.context)
 
     // 4. Camera permission + launcher
     val cameraLauncher = rememberLauncherForActivityResult(
