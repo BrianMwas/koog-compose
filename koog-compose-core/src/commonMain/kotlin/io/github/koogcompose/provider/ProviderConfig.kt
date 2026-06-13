@@ -35,12 +35,10 @@ public sealed class ProviderConfig {
         val temperature: Double? = null,
     ) : ProviderConfig()
 
-    public data class Google(
-        val apiKey: String,
-        val model: String = "gemini-2.0-flash",
-        val maxTokens: Int? = null,
-        val temperature: Double? = null,
-    ) : ProviderConfig()
+    // NOTE: The Google/Gemini provider was removed when migrating to koog 1.0.0,
+    // which dropped its stable Google LLM client (only a 1.0.0-beta-preview exists).
+    // Re-add a ProviderConfig.Google + GoogleBuilder here once koog republishes
+    // prompt-executor-google-client at a stable version.
 
     /**
      * Ollama — local on-device inference.
@@ -154,13 +152,6 @@ public class ProviderConfigBuilder {
         config = OpenAIBuilder(apiKey).apply(block).build()
     }
 
-    public fun google(
-        apiKey: String,
-        block: GoogleBuilder.() -> Unit = {}
-    ) {
-        config = GoogleBuilder(apiKey).apply(block).build()
-    }
-
     public fun ollama(
         model: String,
         block: OllamaBuilder.() -> Unit = {}
@@ -213,7 +204,7 @@ public class ProviderConfigBuilder {
     }
 
     public fun build(): ProviderConfig = config
-        ?: error("koog-compose: No provider configured. Call anthropic(), openAI(), google(), or ollama() inside provider { }")
+        ?: error("koog-compose: No provider configured. Call anthropic(), openAI(), or ollama() inside provider { }")
 }
 
 public class AnthropicBuilder(private val apiKey: String) {
@@ -229,13 +220,6 @@ public class OpenAIBuilder(private val apiKey: String) {
     public var maxTokens: Int? = null
     public var temperature: Double? = null
     public fun build(): ProviderConfig = ProviderConfig.OpenAI(apiKey, model, baseUrl, maxTokens, temperature)
-}
-
-public class GoogleBuilder(private val apiKey: String) {
-    public var model: String = "gemini-2.0-flash"
-    public var maxTokens: Int? = null
-    public var temperature: Double? = null
-    public fun build(): ProviderConfig = ProviderConfig.Google(apiKey, model, maxTokens, temperature)
 }
 
 public class OllamaBuilder(private val model: String) {
@@ -260,10 +244,6 @@ public class RouterBuilder(private val strategy: RouterStrategy) {
 
     public fun openAI(apiKey: String, block: OpenAIBuilder.() -> Unit = {}): Unit {
         providers.add(OpenAIBuilder(apiKey).apply(block).build())
-    }
-
-    public fun google(apiKey: String, block: GoogleBuilder.() -> Unit = {}): Unit {
-        providers.add(GoogleBuilder(apiKey).apply(block).build())
     }
 
     public fun ollama(model: String, block: OllamaBuilder.() -> Unit = {}): Unit {

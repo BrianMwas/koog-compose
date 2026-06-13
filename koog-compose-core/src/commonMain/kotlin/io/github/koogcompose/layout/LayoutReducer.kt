@@ -1,7 +1,7 @@
 package io.github.koogcompose.layout
 
-import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
+import kotlin.time.Clock
+import kotlin.time.Instant
 
 /**
  * Pure function: applies [directive] to [state] and returns the new [LayoutState].

@@ -2,7 +2,7 @@ package io.github.koogcompose.provider
 
 import ai.koog.agents.core.tools.ToolRegistry
 import ai.koog.prompt.cache.memory.InMemoryPromptCache
-import ai.koog.prompt.dsl.Prompt
+import ai.koog.prompt.Prompt
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.cached.CachedPromptExecutor
 import ai.koog.prompt.executor.clients.LLMClient
@@ -10,9 +10,6 @@ import ai.koog.prompt.executor.clients.LLMClientException
 import ai.koog.prompt.executor.clients.anthropic.AnthropicClientSettings
 import ai.koog.prompt.executor.clients.anthropic.AnthropicLLMClient
 import ai.koog.prompt.executor.clients.anthropic.AnthropicModels
-import ai.koog.prompt.executor.clients.google.GoogleClientSettings
-import ai.koog.prompt.executor.clients.google.GoogleLLMClient
-import ai.koog.prompt.executor.clients.google.GoogleModels
 import ai.koog.prompt.executor.clients.modelsById
 import ai.koog.prompt.executor.clients.openai.OpenAIClientSettings
 import ai.koog.prompt.executor.clients.openai.OpenAILLMClient
@@ -24,8 +21,9 @@ import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.AttachmentContent
-import ai.koog.prompt.message.ContentPart
+import ai.koog.prompt.message.AttachmentSource
 import ai.koog.prompt.message.Message
+import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.message.ResponseMetaInfo
 import ai.koog.prompt.params.LLMParams
@@ -50,7 +48,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlin.time.Clock
+import ai.koog.utils.time.KoogClock
 
 internal class KoogAIProvider<S>(
     private val context: KoogComposeContext<S>
@@ -214,11 +212,6 @@ internal fun buildClientForProvider(config: ProviderConfig): LLMClient = when (c
         settings = AnthropicClientSettings()
     )
 
-    is ProviderConfig.Google -> GoogleLLMClient(
-        apiKey = config.apiKey,
-        settings = GoogleClientSettings()
-    )
-
     is ProviderConfig.Ollama -> OllamaClient(config.baseUrl)
     is ProviderConfig.LiteRtLm -> error(
         "koog-compose: LiteRT-LM requires :koog-compose-mediapipe module. " +
@@ -244,10 +237,6 @@ internal fun resolveModel(config: ProviderConfig): LLModel = when (config) {
     is ProviderConfig.Anthropic ->
         AnthropicModels.modelsById()[config.model]
             ?: config.model.asCustomModel(AnthropicModels.Sonnet_4_5)
-
-    is ProviderConfig.Google ->
-        GoogleModels.modelsById()[config.model]
-            ?: config.model.asCustomModel(GoogleModels.Gemini2_0Flash)
 
     is ProviderConfig.Ollama -> LLModel(
         provider = LLMProvider.Ollama,
@@ -284,72 +273,76 @@ internal fun resolveModel(config: ProviderConfig): LLModel = when (config) {
 
 internal fun buildKoogToolRegistry(tools: List<SecureTool>): ToolRegistry {
     if (tools.isEmpty()) return ToolRegistry.EMPTY
+    val koogTools = tools.map { it.toKoogTool() }
     return ToolRegistry {
-        tools.forEach { tool ->
-            tool(tool.toKoogTool())
-        }
+        koogTools.forEach { koogTool -> tool(koogTool) }
     }
 }
 
 private fun ChatMessage.toKoogMessage(): Message = when (role) {
     MessageRole.USER -> {
-        val parts = buildList {
+        val parts = buildList<MessagePart.RequestPart> {
             if (content.isNotBlank()) {
-                add(ContentPart.Text(content))
+                add(MessagePart.Text(content))
             }
             addAll(attachments.map(Attachment::toKoogContentPart))
         }
-        Message.User(parts, RequestMetaInfo.create(Clock.System))
+        Message.User(parts, RequestMetaInfo.create(KoogClock.System))
     }
 
     MessageRole.ASSISTANT ->
-        Message.Assistant(content, ResponseMetaInfo.create(Clock.System))
+        Message.Assistant(content, ResponseMetaInfo.create(KoogClock.System))
 
     MessageRole.SYSTEM ->
-        Message.System(content, RequestMetaInfo.create(Clock.System))
+        Message.System(content, RequestMetaInfo.create(KoogClock.System))
 
+    // koog 1.0.0: tool calls/results are MessagePart.Tool.* carried inside an
+    // assistant (call) or user (result) message, not standalone Message.Tool types.
     MessageRole.TOOL -> when (toolKind) {
-        ToolMessageKind.CALL -> Message.Tool.Call(
-            id = toolCallId,
-            tool = toolName ?: "unknown_tool",
-            content = content,
-            metaInfo = ResponseMetaInfo.create(Clock.System)
+        ToolMessageKind.CALL -> Message.Assistant(
+            MessagePart.Tool.Call(
+                id = toolCallId,
+                tool = toolName ?: "unknown_tool",
+                args = content,
+            ),
+            metaInfo = ResponseMetaInfo.create(KoogClock.System),
         )
 
-        ToolMessageKind.RESULT -> Message.Tool.Result(
-            id = toolCallId,
-            tool = toolName ?: "unknown_tool",
-            content = content,
-            metaInfo = RequestMetaInfo.create(Clock.System)
-        )
-
-        null -> Message.Tool.Result(
-            id = toolCallId,
-            tool = toolName ?: "unknown_tool",
-            content = content,
-            metaInfo = RequestMetaInfo.create(Clock.System)
+        ToolMessageKind.RESULT, null -> Message.User(
+            MessagePart.Tool.Result(
+                id = toolCallId,
+                tool = toolName ?: "unknown_tool",
+                output = content,
+            ),
+            metaInfo = RequestMetaInfo.create(KoogClock.System),
         )
     }
 }
 
-private fun Attachment.toKoogContentPart(): ContentPart = when (this) {
-    is Attachment.Image -> ContentPart.Image(
-        content = AttachmentContent.URL(uri),
-        format = uri.inferFormat("png"),
-        fileName = uri.inferFormat("png") // Use inferFormat for fileName if it's likely a path
+private fun Attachment.toKoogContentPart(): MessagePart.Attachment = when (this) {
+    is Attachment.Image -> MessagePart.Attachment(
+        AttachmentSource.Image(
+            content = AttachmentContent.URL(uri),
+            format = uri.inferFormat("png"),
+            fileName = uri.inferFormat("png"),
+        )
     )
 
-    is Attachment.Document -> ContentPart.File(
-        content = AttachmentContent.URL(uri),
-        format = mimeType.substringAfterLast('/', missingDelimiterValue = uri.inferFormat("txt")),
-        mimeType = mimeType,
-        fileName = uri.inferFormat("txt") // Same here
+    is Attachment.Document -> MessagePart.Attachment(
+        AttachmentSource.File(
+            content = AttachmentContent.URL(uri),
+            format = mimeType.substringAfterLast('/', missingDelimiterValue = uri.inferFormat("txt")),
+            mimeType = mimeType,
+            fileName = uri.inferFormat("txt"),
+        )
     )
 
-    is Attachment.Audio -> ContentPart.Audio(
-        content = AttachmentContent.URL(uri),
-        format = uri.inferFormat("mp3"),
-        fileName = uri.inferFormat("mp3") // Same here
+    is Attachment.Audio -> MessagePart.Attachment(
+        AttachmentSource.Audio(
+            content = AttachmentContent.URL(uri),
+            format = uri.inferFormat("mp3"),
+            fileName = uri.inferFormat("mp3"),
+        )
     )
 }
 
@@ -391,7 +384,6 @@ private fun String.asCustomModel(fallback: LLModel): LLModel = LLModel(
 
 private fun ProviderConfig.defaultTemperature(): Double? = when (this) {
     is ProviderConfig.Anthropic -> temperature
-    is ProviderConfig.Google -> temperature
     is ProviderConfig.Ollama -> temperature
     is ProviderConfig.OpenAI -> temperature
     is ProviderConfig.LiteRtLm -> null
@@ -401,7 +393,6 @@ private fun ProviderConfig.defaultTemperature(): Double? = when (this) {
 
 private fun ProviderConfig.defaultMaxTokens(): Int? = when (this) {
     is ProviderConfig.Anthropic -> maxTokens
-    is ProviderConfig.Google -> maxTokens
     is ProviderConfig.Ollama -> maxTokens
     is ProviderConfig.OpenAI -> maxTokens
     is ProviderConfig.LiteRtLm -> maxTokens

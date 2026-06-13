@@ -6,24 +6,23 @@ import ai.koog.agents.core.dsl.builder.AIAgentNodeDelegate
 import ai.koog.agents.core.dsl.builder.node
 import ai.koog.agents.core.dsl.builder.strategy
 import ai.koog.agents.core.dsl.builder.subgraph
+import ai.koog.agents.core.dsl.extension.ChunkedHistoryCompressionStrategy
+import ai.koog.agents.core.dsl.extension.Concept
+import ai.koog.agents.core.dsl.extension.FactRetrievalHistoryCompressionStrategy
+import ai.koog.agents.core.dsl.extension.FactType
+import ai.koog.agents.core.dsl.extension.FromLastNMessagesHistoryCompressionStrategy
 import ai.koog.agents.core.dsl.extension.HistoryCompressionStrategy
-import ai.koog.agents.core.dsl.extension.nodeLLMRequest
-import ai.koog.agents.core.dsl.extension.nodeLLMRequestMultiple
-import ai.koog.agents.core.dsl.extension.nodeLLMSendToolResult
-import ai.koog.agents.core.dsl.extension.nodeLLMSendMultipleToolResults
+import ai.koog.agents.core.dsl.extension.ReceivedToolResults
+import ai.koog.agents.core.dsl.extension.nodeExecuteTools
 import ai.koog.agents.core.dsl.extension.nodeLLMCompressHistory
-import ai.koog.agents.core.dsl.extension.nodeExecuteTool
-import ai.koog.agents.core.dsl.extension.nodeExecuteMultipleTools
-import ai.koog.agents.core.dsl.extension.onAssistantMessage
-import ai.koog.agents.core.dsl.extension.onToolCall
-import ai.koog.agents.core.dsl.extension.onMultipleToolCalls
-import ai.koog.agents.core.environment.ReceivedToolResult
-import ai.koog.agents.core.environment.result
-import ai.koog.agents.memory.feature.history.RetrieveFactsFromHistory
-import ai.koog.agents.memory.model.Concept
-import ai.koog.agents.memory.model.FactType
+import ai.koog.agents.core.dsl.extension.nodeLLMRequest
+import ai.koog.agents.core.dsl.extension.nodeLLMSendToolResults
+import ai.koog.agents.core.dsl.extension.onTextMessage
+import ai.koog.agents.core.dsl.extension.onToolCalls
 import ai.koog.prompt.message.Message
+import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.RequestMetaInfo
+import ai.koog.utils.time.KoogClock
 import io.github.koogcompose.session.ContextCondition
 import io.github.koogcompose.observability.EventSink
 import io.github.koogcompose.security.GuardrailEnforcer
@@ -32,7 +31,6 @@ import io.github.koogcompose.session.HistoryCompression
 import io.github.koogcompose.session.HistoryCompressionConfig
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.tool.toGuardedKoogTool
-import kotlin.time.Clock
 
 internal const val PHASE_SYSTEM_MARKER: String = "[koog-compose phase instructions]"
 
@@ -45,10 +43,16 @@ internal const val PHASE_SYSTEM_MARKER: String = "[koog-compose phase instructio
  *
  * When a phase has [Phase.hasParallel], all branch tools are collected into a
  * single subgraph where tool calls execute in parallel via
- * [nodeExecuteMultipleTools] with `parallelTools = true`.
+ * [nodeExecuteTools] with `parallel = true`.
  *
  * History compression is wired into the phase subgraph when
  * [KoogComposeContext.config.historyCompression] is configured.
+ *
+ * ## koog 1.0.0 tool flow
+ * koog 1.0.0 removed the auto-writeback execute node and routes all tool calls
+ * through the plural path: an assistant message's tool calls are collected by
+ * [onToolCalls] into a `ToolCalls`, executed by [nodeExecuteTools] into a
+ * [ReceivedToolResults], then written back + re-requested by [nodeLLMSendToolResults].
  */
 internal object PhaseStrategyBuilder {
     internal fun build(
@@ -155,7 +159,7 @@ internal object PhaseStrategyBuilder {
     /**
      * Builds a subgraph for parallel branches. All branch tools are collected
      * into a single subgraph where tool calls execute in parallel via
-     * [nodeExecuteMultipleTools] with `parallelTools = true`.
+     * [nodeExecuteTools] with `parallel = true`.
      *
      * Multiple [parallel] blocks run sequentially (group 1 → group 2 → ...).
      * Branch results flow through state (KoogStateStore) — design branch tools
@@ -184,33 +188,33 @@ internal object PhaseStrategyBuilder {
                 phaseInput = input
                 if (getPending() == phase.name) setPending(null)
             }
-            val nodeCallLLM by nodeLLMRequestMultiple("${phase.name}_llm_parallel")
-            val nodeExecuteTools by nodeExecuteMultipleTools("${phase.name}_exec_parallel", parallelTools = true)
-            val nodeSendToolResults by nodeLLMSendMultipleToolResults("${phase.name}_results")
-            val nodeFinishTransition by node<List<ReceivedToolResult>, String>("${phase.name}_transition_finish") { toolResults ->
+            val nodeCallLLM by nodeLLMRequest("${phase.name}_llm_parallel")
+            val nodeExecuteTools by nodeExecuteTools("${phase.name}_exec_parallel", parallel = true)
+            val nodeSendToolResults by nodeLLMSendToolResults("${phase.name}_results")
+            val nodeFinishTransition by node<ReceivedToolResults, String>("${phase.name}_transition_finish") { results ->
                 llm.writeSession {
                     appendPrompt {
-                        tool {
-                            toolResults.forEach { result(it) }
+                        user {
+                            results.toolResults.forEach { toolResult(it.toMessagePart()) }
                         }
                     }
                 }
                 phaseInput
             }
 
-            val nodeCompress by nodeLLMCompressHistory<List<ReceivedToolResult>>(
+            val nodeCompress by nodeLLMCompressHistory<ReceivedToolResults>(
                 name = "${phase.name}_compress",
                 strategy = koogCompressionStrategy ?: HistoryCompressionStrategy.NoCompression
             )
 
-            fun captureTransitions(toolCalls: List<Message.Tool.Call>): Boolean {
-                for (toolCall in toolCalls) {
-                    for (branch in phase.parallelGroups.flatten()) {
-                        val transition = branch.transitions.firstOrNull { it.toolName == toolCall.tool }
-                        if (transition != null) {
-                            setPending(transition.targetPhase)
-                            onPhaseTransition(branch.name, transition.targetPhase, toolCall.id)
-                        }
+            // koog 1.0.0 onToolCalls invokes this per tool call; record any phase
+            // transition the call triggers across the parallel branches and accept it.
+            fun captureParallelTransition(toolCall: MessagePart.Tool.Call): Boolean {
+                for (branch in phase.parallelGroups.flatten()) {
+                    val transition = branch.transitions.firstOrNull { it.toolName == toolCall.tool }
+                    if (transition != null) {
+                        setPending(transition.targetPhase)
+                        onPhaseTransition(branch.name, transition.targetPhase, toolCall.id)
                     }
                 }
                 return true
@@ -227,16 +231,16 @@ internal object PhaseStrategyBuilder {
             edge(nodeStart forwardTo nodeApplyPhasePrompt)
             edge(nodeApplyPhasePrompt forwardTo nodeCallLLM)
 
-            // LLM responded with assistant message (no tool calls) → finish
+            // LLM responded with a text message (no tool calls) → finish
             edge(
                 (nodeCallLLM forwardTo nodeFinish)
-                    .onAssistantMessage { true }
+                    .onTextMessage { true }
             )
 
             // LLM wants to call tools → execute all in parallel
             edge(
                 (nodeCallLLM forwardTo nodeExecuteTools)
-                    .onMultipleToolCalls { calls -> captureTransitions(calls) }
+                    .onToolCalls { call -> captureParallelTransition(call) }
             )
 
             edge(
@@ -257,11 +261,11 @@ internal object PhaseStrategyBuilder {
             // After sending results, LLM may respond with text or call more tools
             edge(
                 (nodeSendToolResults forwardTo nodeFinish)
-                    .onAssistantMessage { true }
+                    .onTextMessage { true }
             )
             edge(
                 (nodeSendToolResults forwardTo nodeExecuteTools)
-                    .onMultipleToolCalls { calls -> captureTransitions(calls) }
+                    .onToolCalls { call -> captureParallelTransition(call) }
             )
         }
 
@@ -363,13 +367,13 @@ internal object PhaseStrategyBuilder {
                 if (getPending() == phase.name) setPending(null)
             }
             val nodeCallLLM by nodeLLMRequest("${phase.name}_llm")
-            val nodeExecuteTool by nodeExecuteTool("${phase.name}_exec")
-            val nodeSendToolResult by nodeLLMSendToolResult("${phase.name}_result")
-            val nodeFinishTransition by node<ReceivedToolResult, String>("${phase.name}_transition_finish") { toolResult ->
+            val nodeExecuteTools by nodeExecuteTools("${phase.name}_exec")
+            val nodeSendToolResults by nodeLLMSendToolResults("${phase.name}_result")
+            val nodeFinishTransition by node<ReceivedToolResults, String>("${phase.name}_transition_finish") { results ->
                 llm.writeSession {
                     appendPrompt {
-                        tool {
-                            result(toolResult)
+                        user {
+                            results.toolResults.forEach { toolResult(it.toMessagePart()) }
                         }
                     }
                 }
@@ -378,12 +382,14 @@ internal object PhaseStrategyBuilder {
 
             // Only create the compression node when compression is configured
             // AND the trigger includes message-count compression.
-            val nodeCompress by nodeLLMCompressHistory<ReceivedToolResult>(
+            val nodeCompress by nodeLLMCompressHistory<ReceivedToolResults>(
                 name = "${phase.name}_compress",
                 strategy = koogCompressionStrategy ?: HistoryCompressionStrategy.NoCompression
             )
 
-            fun captureTransition(toolCall: Message.Tool.Call): Boolean {
+            // koog 1.0.0 onToolCalls invokes this per tool call; record any phase
+            // transition the call triggers and accept it for execution.
+            fun captureTransition(toolCall: MessagePart.Tool.Call): Boolean {
                 val transition = phase.transitions.firstOrNull { it.toolName == toolCall.tool }
                 if (transition != null) {
                     setPending(transition.targetPhase)
@@ -403,41 +409,41 @@ internal object PhaseStrategyBuilder {
             edge(nodeStart forwardTo nodeApplyPhasePrompt)
             edge(nodeApplyPhasePrompt forwardTo nodeCallLLM)
 
-            // LLM responded with assistant message (no tool calls) → finish
+            // LLM responded with a text message (no tool calls) → finish
             edge(
                 (nodeCallLLM forwardTo nodeFinish)
-                    .onAssistantMessage { true }
+                    .onTextMessage { true }
             )
 
-            // LLM wants to call a tool → execute it
+            // LLM wants to call tools → execute them
             edge(
-                (nodeCallLLM forwardTo nodeExecuteTool)
-                    .onToolCall { call -> captureTransition(call) }
+                (nodeCallLLM forwardTo nodeExecuteTools)
+                    .onToolCalls { call -> captureTransition(call) }
             )
 
             edge(
-                (nodeExecuteTool forwardTo nodeFinishTransition)
+                (nodeExecuteTools forwardTo nodeFinishTransition)
                     .onCondition { _ -> hasPendingTransition() }
             )
             edge(nodeFinishTransition forwardTo nodeFinish)
             edge(
-                (nodeExecuteTool forwardTo nodeCompress)
+                (nodeExecuteTools forwardTo nodeCompress)
                     .onCondition { _ -> !hasPendingTransition() && shouldCompress() }
             )
-            edge(nodeCompress forwardTo nodeSendToolResult)
+            edge(nodeCompress forwardTo nodeSendToolResults)
             edge(
-                (nodeExecuteTool forwardTo nodeSendToolResult)
+                (nodeExecuteTools forwardTo nodeSendToolResults)
                     .onCondition { _ -> !hasPendingTransition() && !shouldCompress() }
             )
 
-            // After sending tool result, LLM may respond with text or call more tools
+            // After sending tool results, LLM may respond with text or call more tools
             edge(
-                (nodeSendToolResult forwardTo nodeFinish)
-                    .onAssistantMessage { true }
+                (nodeSendToolResults forwardTo nodeFinish)
+                    .onTextMessage { true }
             )
             edge(
-                (nodeSendToolResult forwardTo nodeExecuteTool)
-                    .onToolCall { call -> captureTransition(call) }
+                (nodeSendToolResults forwardTo nodeExecuteTools)
+                    .onToolCalls { call -> captureTransition(call) }
             )
         }
 
@@ -456,12 +462,12 @@ internal object PhaseStrategyBuilder {
                 rewritePrompt { current ->
                     current.withMessages { messages ->
                         val withoutPreviousPhaseSystem = messages.filterNot { message ->
-                            message is Message.System && message.content.startsWith(PHASE_SYSTEM_MARKER)
+                            message is Message.System && message.textContent().startsWith(PHASE_SYSTEM_MARKER)
                         }
                         listOf(
                             Message.System(
                                 "$PHASE_SYSTEM_MARKER\n$instructions",
-                                RequestMetaInfo.create(Clock.System),
+                                RequestMetaInfo.create(KoogClock.System),
                             )
                         ) + withoutPreviousPhaseSystem
                     }
@@ -516,13 +522,13 @@ private fun HistoryCompression.toKoogStrategy(): HistoryCompressionStrategy = wh
         HistoryCompressionStrategy.WholeHistory
 
     is HistoryCompression.FromLastN ->
-        HistoryCompressionStrategy.FromLastNMessages(n)
+        FromLastNMessagesHistoryCompressionStrategy(n)
 
     is HistoryCompression.Chunked ->
-        HistoryCompressionStrategy.Chunked(chunkSize)
+        ChunkedHistoryCompressionStrategy(chunkSize)
 
     is HistoryCompression.RetrieveFactsFromHistory ->
-        RetrieveFactsFromHistory(
+        FactRetrievalHistoryCompressionStrategy(
             concepts.map { concept ->
                 Concept(
                     keyword = concept.keyword,

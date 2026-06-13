@@ -1,15 +1,13 @@
 package io.github.koogcompose.phase
 
 import ai.koog.agents.core.tools.ToolDescriptor
+import ai.koog.prompt.Prompt
 import ai.koog.prompt.dsl.ModerationResult
-import ai.koog.prompt.dsl.Prompt
 import ai.koog.prompt.dsl.prompt
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
 import ai.koog.prompt.streaming.StreamFrame
-import io.modelcontextprotocol.kotlin.sdk.Role.assistant
-import io.modelcontextprotocol.kotlin.sdk.Role.user
 import kotlinx.coroutines.flow.Flow
 import kotlinx.serialization.json.Json
 
@@ -38,10 +36,8 @@ internal class StructuredPhaseExecutor<O>(
         // and attempting a different response.
         repeat(output.retries) {
             try {
-                val responses = delegate.execute(primedPrompt, model)
-                val raw = responses
-                    .filterIsInstance<Message.Assistant>()
-                    .joinToString("") { it.content }
+                // koog 1.0.0: execute() returns a single Message.Assistant.
+                val raw = delegate.execute(primedPrompt, model).textContent()
                 return output.parse(raw)
             } catch (e: Exception) {
                 lastError = e
@@ -57,7 +53,7 @@ internal class StructuredPhaseExecutor<O>(
         prompt: Prompt,
         model: LLModel,
         tools: List<ToolDescriptor>
-    ): List<Message.Response> {
+    ): Message.Assistant {
         return delegate.execute(prompt, model, tools)
     }
 
@@ -99,9 +95,9 @@ private fun <O> Prompt.withStructureHint(output: PhaseOutput<O>): Prompt {
     return prompt(id) {
         messages.forEach { msg ->
             when (msg) {
-                is Message.System    -> system(msg.content + hint)
-                is Message.User      -> user { +msg.content }
-                is Message.Assistant -> assistant(msg.content)
+                is Message.System    -> system(msg.textContent() + hint)
+                is Message.User      -> user(msg.textContent())
+                is Message.Assistant -> assistant(msg.textContent())
                 else                  -> Unit
             }
         }

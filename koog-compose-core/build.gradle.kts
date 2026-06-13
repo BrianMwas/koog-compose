@@ -13,12 +13,12 @@ kotlin {
 
     androidTarget {
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_11)
+            jvmTarget.set(JvmTarget.JVM_17)
         }
     }
     jvm("desktop") {
         compilerOptions {
-            jvmTarget.set(JvmTarget.JVM_11)
+            jvmTarget.set(JvmTarget.JVM_17)
         }
     }
     iosArm64()
@@ -34,7 +34,10 @@ kotlin {
             // PhaseSession, SessionRunner, and the Compose helpers.
             api(libs.koog.agents)
             api(libs.koog.agents.core)
-            api(libs.koog.prompt.executor)
+            api(libs.bundles.koog.prompt.executors)
+            // Memory/planner modules were split out in koog 1.0.0 — previously
+            // resolved transitively via koog-agents. Wire it explicitly.
+            implementation(libs.koog.agents.memory)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
@@ -59,7 +62,7 @@ android {
         minSdk = libs.versions.android.minSdk.get().toInt()
     }
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 }

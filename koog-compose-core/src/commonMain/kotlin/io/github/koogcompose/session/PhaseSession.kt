@@ -422,6 +422,7 @@ public class PhaseSession<S>(
             currentTurnId  = { _turnId.value.toString() },
             coroutineScope = scope,
             permissionManager = permissionManager,
+            layoutProcessor = layoutProcessor,
         )
     }
 }

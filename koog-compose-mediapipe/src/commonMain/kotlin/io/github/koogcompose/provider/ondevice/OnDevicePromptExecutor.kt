@@ -1,13 +1,15 @@
 package io.github.koogcompose.provider.ondevice
 
 import ai.koog.agents.core.tools.ToolDescriptor
+import ai.koog.prompt.Prompt
 import ai.koog.prompt.dsl.ModerationResult
-import ai.koog.prompt.dsl.Prompt
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
+import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.ResponseMetaInfo
 import ai.koog.prompt.streaming.StreamFrame
+import ai.koog.utils.time.KoogClock
 import io.github.koogcompose.phase.Phase
 import io.github.koogcompose.phase.toTool
 import io.github.koogcompose.provider.ProviderConfig
@@ -20,7 +22,6 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
-import kotlin.time.Clock
 
 internal class OnDevicePromptExecutor(
     private val context: KoogComposeContext<*>,
@@ -31,32 +32,29 @@ internal class OnDevicePromptExecutor(
         prompt: Prompt,
         model: LLModel,
         tools: List<ToolDescriptor>,
-    ): List<Message.Response> {
+    ): Message.Assistant {
         val text = StringBuilder()
-        var toolCall: Message.Tool.Call? = null
+        var toolCallPart: MessagePart.Tool.Call? = null
 
         executeStreaming(prompt, model, tools).collect { frame ->
             when (frame) {
                 is StreamFrame.TextDelta -> text.append(frame.text)
                 is StreamFrame.TextComplete -> text.clear().append(frame.text)
                 is StreamFrame.ToolCallComplete -> {
-                    toolCall = Message.Tool.Call(
+                    // koog 1.0.0: a tool call is a MessagePart inside the assistant message.
+                    toolCallPart = MessagePart.Tool.Call(
                         id = frame.id,
                         tool = frame.name,
-                        content = frame.content,
-                        metaInfo = ResponseMetaInfo.create(Clock.System),
+                        args = frame.content,
                     )
                 }
                 else -> Unit
             }
         }
 
-        return listOf(
-            toolCall ?: Message.Assistant(
-                content = text.toString(),
-                metaInfo = ResponseMetaInfo.create(Clock.System),
-            )
-        )
+        val meta = ResponseMetaInfo.create(KoogClock.System)
+        return toolCallPart?.let { Message.Assistant(it, meta) }
+            ?: Message.Assistant(text.toString(), meta)
     }
 
     override fun executeStreaming(
@@ -98,7 +96,7 @@ internal class OnDevicePromptExecutor(
             } catch (captured: ToolCallCaptured) {
                 emit(
                     StreamFrame.ToolCallComplete(
-                        id = "tool-${Clock.System.now().toEpochMilliseconds()}",
+                        id = "tool-${KoogClock.System.now().toEpochMilliseconds()}",
                         name = captured.request.name,
                         content = captured.request.arguments.toString(),
                     )
@@ -124,13 +122,13 @@ internal class OnDevicePromptExecutor(
     private fun Prompt.toOnDevicePrompt(): OnDevicePrompt {
         val systemPrompt = messages
             .filterIsInstance<Message.System>()
-            .joinToString("\n\n") { it.content }
+            .joinToString("\n\n") { it.textContent() }
             .ifBlank { null }
 
         val transcript = messages
             .filterNot { it is Message.System }
             .joinToString("\n\n") { message ->
-                "${message.role.name}: ${message.content}"
+                "${message.role.name}: ${message.textContent()}"
             }
 
         return OnDevicePrompt(

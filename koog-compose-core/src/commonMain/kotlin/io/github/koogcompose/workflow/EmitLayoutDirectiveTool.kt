@@ -8,7 +8,7 @@ import io.github.koogcompose.layout.LayoutDirectiveProcessor
 import io.github.koogcompose.layout.LockMode
 import io.github.koogcompose.layout.Position
 import io.github.koogcompose.layout.SlotId
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 

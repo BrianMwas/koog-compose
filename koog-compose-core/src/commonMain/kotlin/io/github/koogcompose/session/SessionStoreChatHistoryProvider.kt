@@ -2,9 +2,10 @@ package io.github.koogcompose.session
 
 import ai.koog.agents.chatMemory.feature.ChatHistoryProvider
 import ai.koog.prompt.message.Message
-import kotlin.time.Clock as KoogClock
+import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.message.ResponseMetaInfo
+import ai.koog.utils.time.KoogClock
 
 /**
  * Bridges koog-compose's [SessionStore] to Koog's [ChatHistoryProvider] interface.
@@ -31,7 +32,7 @@ internal class SessionStoreChatHistoryProvider(
         messages: List<Message>,
     ) {
         val existing = store.load(sessionId)
-        val sessionMessages = messages.mapNotNull { it.toSessionMessage() }
+        val sessionMessages = messages.flatMap { it.toSessionMessage() }
         val now = currentTimeMs()
 
         store.save(
@@ -77,19 +78,17 @@ private fun SessionMessage.toKoogMessage(): Message? {
         "user"        -> Message.User(content = content, metaInfo = reqMeta)
         "assistant"   -> Message.Assistant(content = content, metaInfo = respMeta)
         "system"      -> Message.System(content = content, metaInfo = reqMeta)
+        // koog 1.0.0: tool calls/results are MessagePart.Tool.* parts, not standalone
+        // messages. A tool call rides in an assistant message; a tool result in a user message.
         "tool_call"   -> toolName?.let { name ->
-            Message.Tool.Call(
-                id       = toolCallId ?: "",
-                tool     = name,
-                content  = content,
+            Message.Assistant(
+                MessagePart.Tool.Call(id = toolCallId ?: "", tool = name, args = content),
                 metaInfo = respMeta,
             )
         }
         "tool_result" -> toolName?.let { name ->
-            Message.Tool.Result(
-                id       = toolCallId ?: "",
-                tool     = name,
-                content  = content,
+            Message.User(
+                MessagePart.Tool.Result(id = toolCallId ?: "", tool = name, output = content),
                 metaInfo = reqMeta,
             )
         }
@@ -97,46 +96,36 @@ private fun SessionMessage.toKoogMessage(): Message? {
     }
 }
 
-private fun Message.toSessionMessage(): SessionMessage? = when (this) {
-    is Message.User -> SessionMessage(
-        role    = "user",
-        // Message.User.content in koog is a String, not List<ContentPart>.
-        // extractText() handles whichever concrete type your Koog version uses.
-        content = extractUserText(this),
-    )
-    is Message.Assistant -> SessionMessage(
-        role    = "assistant",
-        content = content,
-    )
-    is Message.System -> SessionMessage(
-        role    = "system",
-        content = content,
-    )
-    is Message.Tool.Call -> SessionMessage(
-        role       = "tool_call",
-        content    = content,
-        toolName   = tool,
-        toolCallId = id,
-    )
-    is Message.Tool.Result -> SessionMessage(
-        role       = "tool_result",
-        content    = content,
-        toolName   = tool,
-        toolCallId = id,
-    )
-    else -> null
-}
-
 /**
- * Extracts a plain string from [Message.User.content].
- *
- * Koog's [Message.User] content type changed across versions:
- * - Older versions: `content: String`
- * - Newer versions: `content: List<MessageContent>` or similar sealed type
- *
- * We call `toString()` as a safe universal fallback. If your Koog version
- * exposes a typed content list, replace the body with the appropriate accessor
- * (e.g. `content.filterIsInstance<ContentPart.Text>().joinToString { it.text }`).
+ * koog 1.0.0 messages carry a list of [MessagePart]s, so a single [Message] can
+ * decompose into several flat [SessionMessage] rows (e.g. an assistant message
+ * with text plus a tool call). Tool calls/results are persisted as their own rows.
  */
-private fun extractUserText(message: Message.User): String =
-    message.content
+private fun Message.toSessionMessage(): List<SessionMessage> = when (this) {
+    is Message.User -> parts.mapNotNull { part ->
+        when (part) {
+            is MessagePart.Text -> SessionMessage(role = "user", content = part.text)
+            is MessagePart.Tool.Result -> SessionMessage(
+                role       = "tool_result",
+                content    = part.output,
+                toolName   = part.tool,
+                toolCallId = part.id,
+            )
+            else -> null
+        }
+    }
+    is Message.System -> listOf(SessionMessage(role = "system", content = textContent()))
+    is Message.Assistant -> parts.mapNotNull { part ->
+        when (part) {
+            is MessagePart.Text -> SessionMessage(role = "assistant", content = part.text)
+            is MessagePart.Tool.Call -> SessionMessage(
+                role       = "tool_call",
+                content    = part.args,
+                toolName   = part.tool,
+                toolCallId = part.id,
+            )
+            else -> null
+        }
+    }
+    else -> emptyList()
+}

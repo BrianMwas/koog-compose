@@ -8,7 +8,7 @@ dokka = "1.9.20"
 
 # Android SDK
 android-compileSdk = "36"
-android-minSdk = "26"
+android-minSdk = "35"
 android-targetSdk = "36"
 
 # Compose
@@ -30,7 +30,7 @@ kotlinx-serialization = "1.10.0"
 kotlinx-datetime = "0.7.1"
 
 # Koog — the AI engine
-koog = "0.8.0"
+koog = "1.0.0"
 
 # Testing
 junit = "4.13.2"
@@ -61,7 +61,14 @@ kotlinx-datetime = { module = "org.jetbrains.kotlinx:kotlinx-datetime", version.
 koog-agents = { module = "ai.koog:koog-agents", version.ref = "koog" }
 koog-agents-core = { module = "ai.koog:agents-core", version.ref = "koog" }
 koog-agents-memory = { module = "ai.koog:agents-features-memory", version.ref = "koog" }
-koog-prompt-executor = { module = "ai.koog:prompt-executor-llms-all", version.ref = "koog" }
+# prompt-executor-llms-all was discontinued in koog 1.0.0 (no stable release);
+# its contents are now the individual modules below, matching what koog-agents uses.
+koog-prompt-executor-clients = { module = "ai.koog:prompt-executor-clients", version.ref = "koog" }
+koog-prompt-executor-model = { module = "ai.koog:prompt-executor-model", version.ref = "koog" }
+koog-prompt-executor-cached = { module = "ai.koog:prompt-executor-cached", version.ref = "koog" }
+koog-prompt-executor-anthropic = { module = "ai.koog:prompt-executor-anthropic-client", version.ref = "koog" }
+koog-prompt-executor-openai = { module = "ai.koog:prompt-executor-openai-client", version.ref = "koog" }
+koog-prompt-executor-ollama = { module = "ai.koog:prompt-executor-ollama-client", version.ref = "koog" }
 
 # Compose
 compose-runtime = { module = "org.jetbrains.compose.runtime:runtime", version.ref = "composeMultiplatform" }
@@ -101,6 +108,17 @@ junit = { module = "junit:junit", version.ref = "junit" }
 androidx-testExt-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-testExt" }
 androidx-espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "androidx-espresso" }
 turbine = { module = "app.cash.turbine:turbine", version.ref = "turbine" }
+
+[bundles]
+# Replacement for the discontinued ai.koog:prompt-executor-llms-all aggregate.
+koog-prompt-executors = [
+    "koog-prompt-executor-clients",
+    "koog-prompt-executor-model",
+    "koog-prompt-executor-cached",
+    "koog-prompt-executor-anthropic",
+    "koog-prompt-executor-openai",
+    "koog-prompt-executor-ollama",
+]
 
 [plugins]
 kotlinMultiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
