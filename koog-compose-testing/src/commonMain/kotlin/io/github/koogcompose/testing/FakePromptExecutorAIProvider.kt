@@ -6,8 +6,9 @@ import ai.koog.prompt.llm.LLMCapability
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.AttachmentContent
-import ai.koog.prompt.message.ContentPart
+import ai.koog.prompt.message.AttachmentSource
 import ai.koog.prompt.message.Message
+import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.RequestMetaInfo
 import ai.koog.prompt.message.ResponseMetaInfo
 import io.github.koogcompose.provider.AIProvider
@@ -23,7 +24,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
-import kotlin.time.Clock
+import ai.koog.utils.time.KoogClock
 
 internal class FakePromptExecutorAIProvider(
     private val promptExecutor: FakePromptExecutor
@@ -43,14 +44,15 @@ internal class FakePromptExecutorAIProvider(
             }
             messages(history.withPendingAttachments(attachments).map(ChatMessage::toPromptMessage))
         }
-        val responses = promptExecutor.execute(
+        val response = promptExecutor.execute(
             prompt = prompt,
             model = TEST_MODEL,
             tools = context.resolveEffectiveTools().map(SecureTool::toToolDescriptor)
         )
 
-        responses.forEach { response ->
-            emit(response.toResponseChunk())
+        // koog 1.0.0: execute() returns a single Message.Assistant carrying parts.
+        response.parts.forEach { part ->
+            part.toResponseChunk()?.let { emit(it) }
         }
         emit(AIResponseChunk.End)
     }
@@ -67,57 +69,68 @@ private fun SecureTool.toToolDescriptor(): ToolDescriptor {
 
 private fun ChatMessage.toPromptMessage(): Message = when (role) {
     MessageRole.USER -> {
-        val parts = buildList {
+        val parts = buildList<MessagePart.RequestPart> {
             if (content.isNotBlank()) {
-                add(ContentPart.Text(content))
+                add(MessagePart.Text(content))
             }
             addAll(attachments.map(Attachment::toContentPart))
         }
-        Message.User(parts, RequestMetaInfo.create(Clock.System))
+        Message.User(parts, RequestMetaInfo.create(KoogClock.System))
     }
 
     MessageRole.ASSISTANT ->
-        Message.Assistant(content, ResponseMetaInfo.create(Clock.System))
+        Message.Assistant(content, ResponseMetaInfo.create(KoogClock.System))
 
     MessageRole.SYSTEM ->
-        Message.System(content, RequestMetaInfo.create(Clock.System))
+        Message.System(content, RequestMetaInfo.create(KoogClock.System))
 
+    // koog 1.0.0: tool calls/results are MessagePart.Tool.* in Assistant/User messages.
     MessageRole.TOOL -> when (toolKind) {
-        ToolMessageKind.CALL -> Message.Tool.Call(
-            id = toolCallId,
-            tool = toolName ?: "unknown_tool",
-            content = content,
-            metaInfo = ResponseMetaInfo.create(Clock.System)
+        ToolMessageKind.CALL -> Message.Assistant(
+            MessagePart.Tool.Call(
+                id = toolCallId,
+                tool = toolName ?: "unknown_tool",
+                args = content,
+            ),
+            metaInfo = ResponseMetaInfo.create(KoogClock.System),
         )
 
         ToolMessageKind.RESULT,
-        null -> Message.Tool.Result(
-            id = toolCallId,
-            tool = toolName ?: "unknown_tool",
-            content = content,
-            metaInfo = RequestMetaInfo.create(Clock.System)
+        null -> Message.User(
+            MessagePart.Tool.Result(
+                id = toolCallId,
+                tool = toolName ?: "unknown_tool",
+                output = content,
+            ),
+            metaInfo = RequestMetaInfo.create(KoogClock.System),
         )
     }
 }
 
-private fun Attachment.toContentPart(): ContentPart = when (this) {
-    is Attachment.Image -> ContentPart.Image(
-        content = AttachmentContent.URL(uri),
-        format = uri.inferFormat("png"),
-        fileName = uri.inferFormat("png")
+private fun Attachment.toContentPart(): MessagePart.Attachment = when (this) {
+    is Attachment.Image -> MessagePart.Attachment(
+        AttachmentSource.Image(
+            content = AttachmentContent.URL(uri),
+            format = uri.inferFormat("png"),
+            fileName = uri.inferFormat("png"),
+        )
     )
 
-    is Attachment.Document -> ContentPart.File(
-        content = AttachmentContent.URL(uri),
-        format = mimeType.substringAfterLast('/', missingDelimiterValue = uri.inferFormat("txt")),
-        mimeType = mimeType,
-        fileName = displayName.ifBlank { uri.inferFormat("txt") }
+    is Attachment.Document -> MessagePart.Attachment(
+        AttachmentSource.File(
+            content = AttachmentContent.URL(uri),
+            format = mimeType.substringAfterLast('/', missingDelimiterValue = uri.inferFormat("txt")),
+            mimeType = mimeType,
+            fileName = displayName.ifBlank { uri.inferFormat("txt") },
+        )
     )
 
-    is Attachment.Audio -> ContentPart.Audio(
-        content = AttachmentContent.URL(uri),
-        format = uri.inferFormat("mp3"),
-        fileName = displayName.ifBlank { uri.inferFormat("mp3") }
+    is Attachment.Audio -> MessagePart.Attachment(
+        AttachmentSource.Audio(
+            content = AttachmentContent.URL(uri),
+            format = uri.inferFormat("mp3"),
+            fileName = displayName.ifBlank { uri.inferFormat("mp3") },
+        )
     )
 }
 
@@ -140,14 +153,15 @@ private fun List<ChatMessage>.withPendingAttachments(attachments: List<Attachmen
     }
 }
 
-private fun Message.Response.toResponseChunk(): AIResponseChunk = when (this) {
-    is Message.Assistant -> AIResponseChunk.TextComplete(content)
-    is Message.Reasoning -> AIResponseChunk.ReasoningDelta(content)
-    is Message.Tool.Call -> AIResponseChunk.ToolCallRequest(
+private fun MessagePart.toResponseChunk(): AIResponseChunk? = when (this) {
+    is MessagePart.Text -> AIResponseChunk.TextComplete(text)
+    is MessagePart.Reasoning -> AIResponseChunk.ReasoningDelta(content.joinToString("\n"))
+    is MessagePart.Tool.Call -> AIResponseChunk.ToolCallRequest(
         toolCallId = id,
         toolName = tool,
-        args = content.toJsonObjectSafe()
+        args = args.toJsonObjectSafe()
     )
+    else -> null
 }
 
 private fun String.toJsonObjectSafe(): JsonObject = try {

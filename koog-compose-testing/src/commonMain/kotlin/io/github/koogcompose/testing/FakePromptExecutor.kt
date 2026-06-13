@@ -1,13 +1,15 @@
 package io.github.koogcompose.testing
 
 import ai.koog.agents.core.tools.ToolDescriptor
+import ai.koog.prompt.Prompt
 import ai.koog.prompt.dsl.ModerationResult
-import ai.koog.prompt.dsl.Prompt
 import ai.koog.prompt.executor.model.PromptExecutor
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.message.Message
+import ai.koog.prompt.message.MessagePart
 import ai.koog.prompt.message.ResponseMetaInfo
 import ai.koog.prompt.streaming.StreamFrame
+import ai.koog.utils.time.KoogClock
 import io.github.koogcompose.phase.PhaseRegistry
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -17,7 +19,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
-import kotlin.time.Clock
 
 /**
  * Deterministic [PromptExecutor] for unit tests.
@@ -87,8 +88,8 @@ public class FakePromptExecutor internal constructor(
         prompt: Prompt,
         model: LLModel,
         tools: List<ToolDescriptor>
-    ): List<Message.Response> {
-        return listOf(nextResponse(prompt, model, tools))
+    ): Message.Assistant {
+        return nextResponse(prompt, model, tools)
     }
 
     override fun executeStreaming(
@@ -96,28 +97,25 @@ public class FakePromptExecutor internal constructor(
         model: LLModel,
         tools: List<ToolDescriptor>
     ): Flow<StreamFrame> = flow {
-        when (val response = nextResponse(prompt, model, tools)) {
-            is Message.Assistant -> {
-                emit(StreamFrame.TextComplete(response.content))
-                emit(StreamFrame.End(metaInfo = response.metaInfo))
-            }
-
-            is Message.Tool.Call -> {
-                emit(
+        // koog 1.0.0: a single Message.Assistant carries text and/or tool-call parts.
+        val response = nextResponse(prompt, model, tools)
+        response.parts.forEach { part ->
+            when (part) {
+                is MessagePart.Text -> emit(StreamFrame.TextComplete(part.text))
+                is MessagePart.Tool.Call -> emit(
                     StreamFrame.ToolCallComplete(
-                        id = response.id,
-                        name = response.tool,
-                        content = response.content
+                        id = part.id,
+                        name = part.tool,
+                        content = part.args,
                     )
                 )
-                emit(StreamFrame.End(metaInfo = response.metaInfo))
-            }
-
-            is Message.Reasoning -> {
-                emit(StreamFrame.ReasoningComplete(text = listOf(response.content)))
-                emit(StreamFrame.End(metaInfo = response.metaInfo))
+                is MessagePart.Reasoning -> emit(
+                    StreamFrame.ReasoningComplete(id = part.id, content = part.content)
+                )
+                else -> Unit
             }
         }
+        emit(StreamFrame.End(metaInfo = response.metaInfo))
     }
 
     override suspend fun moderate(prompt: Prompt, model: LLModel): ModerationResult {
@@ -130,7 +128,7 @@ public class FakePromptExecutor internal constructor(
         prompt: Prompt,
         model: LLModel,
         tools: List<ToolDescriptor>
-    ): Message.Response {
+    ): Message.Assistant {
         val availableToolNames = tools.map(ToolDescriptor::name).toSet()
         val resolvedPhase = phaseCatalog.resolvePhase(availableToolNames)
         if (resolvedPhase != null) {
@@ -142,7 +140,7 @@ public class FakePromptExecutor internal constructor(
 
         recordToolResults(prompt)
 
-        val latestUserMessage = prompt.messages.lastOrNull { message -> message is Message.User }?.content
+        val latestUserMessage = prompt.messages.lastOrNull { message -> message is Message.User }?.textContent()
         val active = if (activeRule != null && activeRule?.remainingSteps?.isNotEmpty() == true) {
             val currentRule = requireNotNull(activeRule)
             if (latestUserMessage != null && currentRule.userMessage != latestUserMessage) {
@@ -193,7 +191,7 @@ public class FakePromptExecutor internal constructor(
                 if (active.remainingSteps.isEmpty()) {
                     activeRule = null
                 }
-                Message.Assistant(step.text, ResponseMetaInfo.create(Clock.System))
+                Message.Assistant(step.text, ResponseMetaInfo.create(KoogClock.System))
             }
 
             is Step.ToolCall -> {
@@ -210,18 +208,23 @@ public class FakePromptExecutor internal constructor(
                 if (step.toolName.startsWith("transition_to_")) {
                     pendingTransitionTarget = step.toolName.removePrefix("transition_to_")
                 }
-                Message.Tool.Call(
-                    id = step.toolCallId,
-                    tool = step.toolName,
-                    content = step.args.toString(),
-                    metaInfo = ResponseMetaInfo.create(Clock.System)
+                Message.Assistant(
+                    MessagePart.Tool.Call(
+                        id = step.toolCallId,
+                        tool = step.toolName,
+                        args = step.args.toString(),
+                    ),
+                    metaInfo = ResponseMetaInfo.create(KoogClock.System),
                 )
             }
         }
     }
 
     private fun recordToolResults(prompt: Prompt): Unit {
-        val toolResultsInPrompt = prompt.messages.filterIsInstance<Message.Tool.Result>()
+        // koog 1.0.0: tool results are MessagePart.Tool.Result parts inside messages.
+        val toolResultsInPrompt = prompt.messages
+            .flatMap { message -> message.parts }
+            .filterIsInstance<MessagePart.Tool.Result>()
         if (toolResultsInPrompt.size <= observedToolResultCount) {
             return
         }
@@ -229,11 +232,11 @@ public class FakePromptExecutor internal constructor(
         toolResultsInPrompt
             .drop(observedToolResultCount)
             .forEach { result ->
-                val flags = parseToolResultFlags(result.content)
+                val flags = parseToolResultFlags(result.output)
                 observedToolResults += ToolResultRecord(
                     toolCallId = result.id,
                     toolName = result.tool,
-                    content = result.content,
+                    content = result.output,
                     denied = flags.denied,
                     failed = flags.failed
                 )
