@@ -1,6 +1,7 @@
 package io.github.koogcompose.provider
 
 import ai.koog.agents.core.tools.ToolRegistry
+import ai.koog.http.client.ktor.KtorKoogHttpClient
 import ai.koog.prompt.cache.memory.InMemoryPromptCache
 import ai.koog.prompt.Prompt
 import ai.koog.prompt.dsl.prompt
@@ -204,15 +205,20 @@ public fun buildExecutor(config: ProviderConfig): PromptExecutor {
 internal fun buildClientForProvider(config: ProviderConfig): LLMClient = when (config) {
     is ProviderConfig.OpenAI -> OpenAILLMClient(
         apiKey = config.apiKey,
-        settings = OpenAIClientSettings(baseUrl = normalizeOpenAIBaseUrl(config.baseUrl))
+        settings = OpenAIClientSettings(baseUrl = normalizeOpenAIBaseUrl(config.baseUrl)),
+        httpClientFactory = KtorKoogHttpClient.Factory()
     )
 
     is ProviderConfig.Anthropic -> AnthropicLLMClient(
         apiKey = config.apiKey,
-        settings = AnthropicClientSettings()
+        settings = AnthropicClientSettings(),
+        httpClientFactory = KtorKoogHttpClient.Factory()
     )
 
-    is ProviderConfig.Ollama -> OllamaClient(config.baseUrl)
+    is ProviderConfig.Ollama -> OllamaClient(
+        httpClientFactory = KtorKoogHttpClient.Factory(),
+        baseUrl = config.baseUrl
+    )
     is ProviderConfig.LiteRtLm -> error(
         "koog-compose: LiteRT-LM requires :koog-compose-mediapipe module. " +
             "Use LiteRtLmProvider directly instead of KoogAIProvider."
