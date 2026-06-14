@@ -161,9 +161,10 @@ internal class KoogAIProvider<S>(
             }
         }.ifEmpty { null }
 
+        val defaults = providerConfig.generationDefaults()
         return LLMParams(
-            temperature = configParams?.temperature ?: providerConfig.defaultTemperature(),
-            maxTokens = configParams?.maxTokens ?: providerConfig.defaultMaxTokens(),
+            temperature = configParams?.temperature ?: defaults.temperature,
+            maxTokens = configParams?.maxTokens ?: defaults.maxTokens,
             additionalProperties = additionalProperties
         )
     }
@@ -388,22 +389,20 @@ private fun String.asCustomModel(fallback: LLModel): LLModel = LLModel(
     maxOutputTokens = fallback.maxOutputTokens
 )
 
-private fun ProviderConfig.defaultTemperature(): Double? = when (this) {
-    is ProviderConfig.Anthropic -> temperature
-    is ProviderConfig.Ollama -> temperature
-    is ProviderConfig.OpenAI -> temperature
-    is ProviderConfig.LiteRtLm -> null
-    is ProviderConfig.OnDevice -> null
-    is ProviderConfig.Router -> providers.firstOrNull()?.defaultTemperature()
-}
+/**
+ * Resolved default generation parameters for a [ProviderConfig], used to fill
+ * in [LLMParams] when the caller hasn't supplied explicit `llmParams`.
+ */
+internal data class GenerationDefaults(val temperature: Double?, val maxTokens: Int?)
 
-private fun ProviderConfig.defaultMaxTokens(): Int? = when (this) {
-    is ProviderConfig.Anthropic -> maxTokens
-    is ProviderConfig.Ollama -> maxTokens
-    is ProviderConfig.OpenAI -> maxTokens
-    is ProviderConfig.LiteRtLm -> maxTokens
-    is ProviderConfig.OnDevice -> null
-    is ProviderConfig.Router -> providers.firstOrNull()?.defaultMaxTokens()
+internal fun ProviderConfig.generationDefaults(): GenerationDefaults = when (this) {
+    is ProviderConfig.Anthropic -> GenerationDefaults(temperature, maxTokens)
+    is ProviderConfig.Ollama -> GenerationDefaults(temperature, maxTokens)
+    is ProviderConfig.OpenAI -> GenerationDefaults(temperature, maxTokens)
+    is ProviderConfig.LiteRtLm -> GenerationDefaults(temperature = null, maxTokens = maxTokens)
+    is ProviderConfig.OnDevice -> GenerationDefaults(temperature = null, maxTokens = null)
+    is ProviderConfig.Router -> providers.firstOrNull()?.generationDefaults()
+        ?: GenerationDefaults(temperature = null, maxTokens = null)
 }
 
 private fun String.toJsonObjectSafe(): JsonObject = try {

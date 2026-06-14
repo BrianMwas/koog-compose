@@ -137,6 +137,8 @@ public sealed class DirectiveOutcome {
         override val correlationId: DirectiveId,
         override val resultingStateVersion: Long,
         public val directiveReason: String? = null,
+        /** True if a requested [Position.Before]/[Position.After] silently fell back to [Position.End]. */
+        public val positionFallback: Boolean = false,
     ) : DirectiveOutcome()
 
     /**
@@ -149,6 +151,8 @@ public sealed class DirectiveOutcome {
         public val final: AgentLayoutDirective,
         public val reason: String,
         override val resultingStateVersion: Long,
+        /** True if [final]'s requested [Position.Before]/[Position.After] silently fell back to [Position.End]. */
+        public val positionFallback: Boolean = false,
     ) : DirectiveOutcome()
 
     /** Directive dropped entirely. State is unchanged. */

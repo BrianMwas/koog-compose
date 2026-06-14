@@ -42,6 +42,82 @@ class KoogProviderHelpersTest {
     }
 
     @Test
+    fun generationDefaults_anthropic_usesConfiguredValues() {
+        val defaults = ProviderConfig.Anthropic(
+            apiKey = "key",
+            maxTokens = 2048,
+            temperature = 0.5,
+        ).generationDefaults()
+
+        assertEquals(0.5, defaults.temperature)
+        assertEquals(2048, defaults.maxTokens)
+    }
+
+    @Test
+    fun generationDefaults_openAI_usesConfiguredValues() {
+        val defaults = ProviderConfig.OpenAI(
+            apiKey = "key",
+            maxTokens = 1024,
+            temperature = 0.2,
+        ).generationDefaults()
+
+        assertEquals(0.2, defaults.temperature)
+        assertEquals(1024, defaults.maxTokens)
+    }
+
+    @Test
+    fun generationDefaults_ollama_usesConfiguredValues() {
+        val defaults = ProviderConfig.Ollama(
+            model = "llama3.2",
+            maxTokens = 512,
+            temperature = 0.9,
+        ).generationDefaults()
+
+        assertEquals(0.9, defaults.temperature)
+        assertEquals(512, defaults.maxTokens)
+    }
+
+    @Test
+    fun generationDefaults_liteRtLm_suppressesTemperatureButKeepsMaxTokens() {
+        val defaults = ProviderConfig.LiteRtLm(
+            maxTokens = 1024,
+            temperature = 0.7,
+        ).generationDefaults()
+
+        assertEquals(null, defaults.temperature)
+        assertEquals(1024, defaults.maxTokens)
+    }
+
+    @Test
+    fun generationDefaults_onDevice_isAlwaysNull() {
+        val defaults = ProviderConfig.OnDevice(modelPath = "/path").generationDefaults()
+
+        assertEquals(null, defaults.temperature)
+        assertEquals(null, defaults.maxTokens)
+    }
+
+    @Test
+    fun generationDefaults_router_delegatesToFirstProvider() {
+        val defaults = ProviderConfig.Router(
+            providers = listOf(
+                ProviderConfig.OpenAI(apiKey = "key", maxTokens = 256, temperature = 0.3),
+                ProviderConfig.Anthropic(apiKey = "key2", maxTokens = 4096, temperature = 0.9),
+            )
+        ).generationDefaults()
+
+        assertEquals(0.3, defaults.temperature)
+        assertEquals(256, defaults.maxTokens)
+    }
+
+    @Test
+    fun generationDefaults_emptyRouter_isAlwaysNull() {
+        val defaults = ProviderConfig.Router(providers = emptyList()).generationDefaults()
+
+        assertEquals(null, defaults.temperature)
+        assertEquals(null, defaults.maxTokens)
+    }
+
+    @Test
     fun secureToolDescriptor_supportsArraysEnumsAndObjects() {
         val descriptor = StructuredTool().toKoogToolDescriptor()
 

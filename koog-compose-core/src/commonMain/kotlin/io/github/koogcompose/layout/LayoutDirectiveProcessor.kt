@@ -133,6 +133,7 @@ public class DefaultLayoutDirectiveProcessor(
         val state = _layoutState.value
         when (val decision = effectivePolicy.evaluate(directive, state, config.workflowContext)) {
             is PolicyDecision.Allow -> {
+                val fallback = LayoutReducer.positionFallsBackToEnd(state, directive)
                 val newState = LayoutReducer.apply(state, directive, config.slotRegistry)
                 _layoutState.value = newState
                 _outcomes.emit(
@@ -140,12 +141,14 @@ public class DefaultLayoutDirectiveProcessor(
                         correlationId = directive.correlationId,
                         resultingStateVersion = newState.version,
                         directiveReason = directive.reason,
+                        positionFallback = fallback,
                     )
                 )
             }
 
             is PolicyDecision.Rewrite -> {
                 val finalDirective = decision.replacement
+                val fallback = LayoutReducer.positionFallsBackToEnd(state, finalDirective)
                 val newState = LayoutReducer.apply(state, finalDirective, config.slotRegistry)
                 _layoutState.value = newState
                 _outcomes.emit(
@@ -155,6 +158,7 @@ public class DefaultLayoutDirectiveProcessor(
                         final = finalDirective,
                         reason = decision.reason,
                         resultingStateVersion = newState.version,
+                        positionFallback = fallback,
                     )
                 )
             }
