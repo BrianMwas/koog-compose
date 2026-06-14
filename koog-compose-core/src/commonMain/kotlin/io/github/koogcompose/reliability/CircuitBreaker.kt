@@ -1,5 +1,8 @@
 package io.github.koogcompose.reliability
 
+import io.github.koogcompose.observability.AgentEvent
+import io.github.koogcompose.observability.EventSink
+import io.github.koogcompose.observability.NoOpEventSink
 import io.github.koogcompose.observability.currentTimeMs
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -85,23 +88,29 @@ public class CircuitBreaker(
         }
     }
 
-    internal suspend fun recordSuccess() = mutex.withLock {
+    /** Records a success. Returns true if the circuit transitioned HALF_OPEN → CLOSED. */
+    internal suspend fun recordSuccess(): Boolean = mutex.withLock {
         failureCount = 0
         if (state == State.HALF_OPEN) {
             successCount++
             if (successCount >= successThreshold) {
                 state = State.CLOSED
+                return@withLock true
             }
         }
+        false
     }
 
-    internal suspend fun recordFailure() = mutex.withLock {
+    /** Records a failure. Returns true if the circuit transitioned to OPEN. */
+    internal suspend fun recordFailure(): Boolean = mutex.withLock {
         failureCount++
         if (state == State.HALF_OPEN || failureCount >= failureThreshold) {
             state = State.OPEN
             openedAtMs = currentTimeMs()
             failureCount = 0
+            return@withLock true
         }
+        false
     }
 
     /** Returns true if the circuit is currently open and rejecting calls. */
@@ -141,6 +150,8 @@ public class CircuitOpenException(message: String) : Exception(message)
 public class CircuitBreakerGuard(
     private val delegate: io.github.koogcompose.tool.SecureTool,
     private val circuitBreaker: CircuitBreaker,
+    private val sessionId: String = "",
+    private val eventSink: EventSink = NoOpEventSink,
 ) : io.github.koogcompose.tool.SecureTool by delegate {
 
     override suspend fun execute(args: kotlinx.serialization.json.JsonObject)
@@ -169,11 +180,20 @@ public class CircuitBreakerGuard(
         val result = delegate.execute(args)
 
         // Count ToolResult.Failure as a circuit breaker failure
-        // but NOT ToolResult.Denied (user/policy denials aren't service failures)
+        // but NOT ToolResult.Denied (user/policy denials aren't service failures).
+        // Emit an observability event when a state transition occurs.
         when (result) {
             is io.github.koogcompose.tool.ToolResult.Success,
-            is io.github.koogcompose.tool.ToolResult.Structured<*> -> circuitBreaker.recordSuccess()
-            is io.github.koogcompose.tool.ToolResult.Failure -> circuitBreaker.recordFailure()
+            is io.github.koogcompose.tool.ToolResult.Structured<*> ->
+                if (circuitBreaker.recordSuccess()) {
+                    eventSink.emit(AgentEvent.CircuitBreakerClosed(sessionId, delegate.name))
+                }
+            is io.github.koogcompose.tool.ToolResult.Failure ->
+                if (circuitBreaker.recordFailure()) {
+                    eventSink.emit(
+                        AgentEvent.CircuitBreakerOpened(sessionId, delegate.name, circuitBreaker.cooldownMs)
+                    )
+                }
             is io.github.koogcompose.tool.ToolResult.Denied -> Unit // Don't count as failure
         }
 
