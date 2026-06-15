@@ -29,6 +29,24 @@ public object LayoutReducer {
         is AgentLayoutDirective.LockComponent     -> applyLock(state, directive)
     }
 
+    /**
+     * True if applying [directive] to [state] would silently fall back a
+     * [Position.Before]/[Position.After] insertion to [Position.End] because the
+     * referenced component is not currently in the target slot.
+     *
+     * Lets [DefaultLayoutDirectiveProcessor] surface this on the emitted
+     * [DirectiveOutcome] so the agent can notice its requested position was ignored.
+     */
+    public fun positionFallsBackToEnd(state: LayoutState, directive: AgentLayoutDirective): Boolean {
+        if (directive !is AgentLayoutDirective.ShowComponent) return false
+        val reference = when (val position = directive.position) {
+            is Position.Before -> position.reference
+            is Position.After -> position.reference
+            else -> return false
+        }
+        return state.entriesFor(directive.slotId).none { it.componentId == reference }
+    }
+
     // ── ShowComponent ──────────────────────────────────────────────────────
 
     private fun applyShow(

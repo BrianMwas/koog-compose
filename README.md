@@ -281,6 +281,40 @@ val displayText by remember {
 }.collectAsState(initial = "")
 ```
 
+### Generative UI layout
+
+The layout engine lets the agent drive *what UI is shown* through a small, declarative
+vocabulary instead of free-form code generation. The agent emits
+`AgentLayoutDirective`s — `ShowComponent`, `HideComponent`, `ReorderComponents`,
+`SwapComponent`, `LockComponent` — into named, host-declared **slots**. Each directive
+runs through a validation pipeline (`SchemaValidation → PolicyCheck → SlotConstraintCheck
+→ Reduce`) before it touches the live `LayoutState` your Compose UI renders.
+
+Every directive carries a `correlationId`, and the engine publishes a `DirectiveOutcome`
+the agent reads back on its next turn:
+
+| Outcome | Meaning |
+|---------|---------|
+| `Accepted` | Applied as-is. |
+| `Rewritten` | Modified by policy before applying (e.g. evict-then-show on a Single slot). |
+| `Rejected` | Dropped; `rejectedAt` names the pipeline stage that refused it. |
+| `Coalesced` | Deduplicated against an in-flight directive with the same `correlationId`. |
+
+**`positionFallback`** — `ShowComponent` can request a relative `Position.Before(ref)` or
+`Position.After(ref)`. If the referenced component isn't in the slot, the engine silently
+appends to the end instead of rejecting the directive. When that happens, the `Accepted`
+(or `Rewritten`) outcome carries `positionFallback = true`, so the agent can detect that
+its requested ordering wasn't honored and correct course on the next turn:
+
+```kotlin
+processor.outcomes.collect { outcome ->
+    if (outcome is DirectiveOutcome.Accepted && outcome.positionFallback) {
+        // The Before/After reference was missing — component went to the end.
+        // The agent can re-issue a ReorderComponents directive if ordering matters.
+    }
+}
+```
+
 ---
 
 ## Testing
@@ -419,6 +453,8 @@ Events emitted at runtime:
 | `GuardrailDenied` | Tool blocked by rate limit, allowlist, or user refusal | Security/compliance audit, UX friction |
 | `AgentStuck` | LLM repeats the same phase N times | Loop detection, fallback messaging |
 | `TurnFailed` | Retry exhausted after N attempts | Error rates, provider reliability |
+| `CircuitBreakerOpened` | A `CircuitBreakerGuard` trips OPEN after repeated failures | Degraded-mode banners, dependency alerting |
+| `CircuitBreakerClosed` | A tripped breaker recovers to CLOSED | Recovery tracking, clearing degraded UI |
 | `LLMRequested` | (Reserved for future use) | — |
 
 Implement a custom sink by extending `EventSink`:
@@ -730,6 +766,22 @@ States:
 - **CLOSED** (normal) → failures counted
 - **OPEN** (broken) → calls rejected immediately
 - **HALF_OPEN** (trial) → one success closes it, one failure reopens
+
+Pass a `sessionId` and an `EventSink` to observe state transitions — the guard emits
+`AgentEvent.CircuitBreakerOpened` when it trips and `AgentEvent.CircuitBreakerClosed`
+when it recovers, so you can surface degraded-mode banners or alert your backend:
+
+```kotlin
+val tool = CircuitBreakerGuard(
+    delegate = SavePhotoTool(stateStore),
+    circuitBreaker = breaker,
+    sessionId = session.id,
+    eventSink = myEventSink,   // routes to Firebase / Datadog / logs
+)
+```
+
+Both parameters are optional (default: no session id, `NoOpEventSink`), so existing
+call sites keep working unchanged.
 
 ### Session Corruption Recovery
 

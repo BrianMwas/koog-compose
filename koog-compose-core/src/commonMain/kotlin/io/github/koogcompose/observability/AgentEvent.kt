@@ -62,6 +62,27 @@ public sealed class AgentEvent {
         val message: String,
         override val timestampMs: Long = currentTimeMs(),
     ) : AgentEvent()
+
+    /**
+     * A [io.github.koogcompose.reliability.CircuitBreaker] tripped to OPEN after
+     * repeated failures. Calls to [toolName] are rejected for [cooldownMs] ms.
+     */
+    public data class CircuitBreakerOpened(
+        val sessionId: String,
+        val toolName: String,
+        val cooldownMs: Long,
+        override val timestampMs: Long = currentTimeMs(),
+    ) : AgentEvent()
+
+    /**
+     * A [io.github.koogcompose.reliability.CircuitBreaker] recovered to CLOSED
+     * after successful trial calls. [toolName] is healthy again.
+     */
+    public data class CircuitBreakerClosed(
+        val sessionId: String,
+        val toolName: String,
+        override val timestampMs: Long = currentTimeMs(),
+    ) : AgentEvent()
 }
 
 // expect/actual so commonMain compiles without java.lang.System
