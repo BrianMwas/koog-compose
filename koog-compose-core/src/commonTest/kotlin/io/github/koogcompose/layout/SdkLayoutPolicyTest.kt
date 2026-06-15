@@ -369,7 +369,7 @@ private fun componentRegistry(): ComponentRegistry = ComponentRegistry(
     )
 )
 
-private class TestUserRole(permissions: Set<Permission>) : UserRole(
+private class PolicyTestUserRole(permissions: Set<Permission>) : UserRole(
     id = "viewer",
     displayName = "Viewer",
     permissions = permissions,
@@ -377,7 +377,7 @@ private class TestUserRole(permissions: Set<Permission>) : UserRole(
 
 private fun workflowContext(permissions: Set<Permission> = setOf(Permissions.Read)): WorkflowContext = WorkflowContext(
     businessId = BusinessId("biz-1"),
-    userRole = TestUserRole(permissions),
+    userRole = PolicyTestUserRole(permissions),
     activeWorkflow = WorkflowId("wf-1"),
     deviceContext = DeviceContext(Platform.Android, FormFactor.Phone, NetworkClass.Online, "en-US"),
 )
