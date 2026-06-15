@@ -8,10 +8,12 @@ import androidx.compose.ui.window.ComposeUIViewController
 /**
  * iOS entry point for the koog-compose sample.
  *
- * Shows [SimpleHomeTeachingApp] — the same multi-phase home-tutor agent
- * (greet → assess → teach → practice → review → wrapup) used on Android,
- * minus the Android-only camera capture and Room persistence:
- * - Works without platform-specific APIs
+ * Shows [SampleSelectorApp], which lets the user pick between the
+ * cross-platform showcases — the multi-phase home-tutor agent
+ * (greet → assess → teach → practice → review → wrapup) and the
+ * trip-planner agent (discover → itinerary → booking) with a live
+ * budget panel and confirmation-gated booking tool. Both run without
+ * platform-specific APIs:
  * - Compatible with cloud LLM providers (Anthropic, OpenAI)
  * - In-memory session (no persistence)
  * - Full Compose Multiplatform UI support on iOS 🎉
@@ -28,6 +30,6 @@ import androidx.compose.ui.window.ComposeUIViewController
  */
 fun MainViewController() = ComposeUIViewController {
     MaterialTheme {
-        SimpleHomeTeachingApp(modifier = Modifier.fillMaxSize())
+        SampleSelectorApp(modifier = Modifier.fillMaxSize())
     }
 }
