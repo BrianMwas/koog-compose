@@ -22,11 +22,11 @@ import kotlinx.serialization.json.Json
 class HomeTeachingViewModelWithPersistence(
     agentDef: KoogDefinition<TeachingState>,
     private val persistenceManager: SessionPersistenceManager,
+    private val androidContext: Context,
 ) : ViewModel() {
 
     private val context = agentDef as KoogComposeContext<TeachingState>
     private val executor = agentDef.createExecutor()
-    private val androidContext = context as? Context ?: throw IllegalStateException("Context must be Android Context")
 
     private val _savedSessions = MutableStateFlow<List<SessionEntity>>(emptyList())
     val savedSessions: StateFlow<List<SessionEntity>> = _savedSessions.asStateFlow()

@@ -1,8 +1,5 @@
 package io.github.koogcompose.sample
 
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,33 +17,29 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import io.github.koogcompose.sample.HomeTeachingApp
 
-class MainActivity : ComponentActivity() {
+/**
+ * Lightweight picker between the cross-platform koog-compose samples.
+ *
+ * Used by the iOS entry point (and available to other platforms) so the
+ * library's different showcase scenarios — a multi-phase home tutor and a
+ * stateful trip planner with confirmation flows — are both reachable.
+ */
+@Composable
+fun SampleSelectorApp(modifier: Modifier = Modifier) {
+    var selected by remember { mutableStateOf<Sample?>(null) }
 
-    // ActivityResult registry — registered once, used by koog-compose tools
-    private lateinit var activityResults: KoogActivityResultRegistry
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-
-        // Create registry with context, then register launchers
-        activityResults = KoogActivityResultRegistry(this)
-        activityResults.register(this)
-
-        setContent {
-            MaterialTheme {
-                AndroidSampleSelectorApp(modifier = Modifier.fillMaxSize())
-            }
-        }
+    when (selected) {
+        null -> SampleListScreen(modifier = modifier, onSelect = { selected = it })
+        Sample.HomeTutor -> SimpleHomeTeachingApp(modifier = modifier)
+        Sample.TripPlanner -> SimpleTripPlannerApp(modifier = modifier)
     }
 }
 
-private enum class AndroidSample(val title: String, val description: String) {
+private enum class Sample(val title: String, val description: String) {
     HomeTutor(
         title = "🏠 Home Tutor",
-        description = "Multi-phase teaching agent with camera homework capture and " +
-            "session persistence.",
+        description = "Multi-phase teaching agent that assesses, teaches, and tracks progress.",
     ),
     TripPlanner(
         title = "✈️ Trip Planner",
@@ -56,20 +49,9 @@ private enum class AndroidSample(val title: String, val description: String) {
 }
 
 @Composable
-private fun AndroidSampleSelectorApp(modifier: Modifier = Modifier) {
-    var selected by remember { mutableStateOf<AndroidSample?>(null) }
-
-    when (selected) {
-        null -> AndroidSampleListScreen(modifier = modifier, onSelect = { selected = it })
-        AndroidSample.HomeTutor -> HomeTeachingApp(modifier = modifier)
-        AndroidSample.TripPlanner -> SimpleTripPlannerApp(modifier = modifier)
-    }
-}
-
-@Composable
-private fun AndroidSampleListScreen(
+private fun SampleListScreen(
     modifier: Modifier = Modifier,
-    onSelect: (AndroidSample) -> Unit,
+    onSelect: (Sample) -> Unit,
 ) {
     Scaffold(
         modifier = modifier
@@ -90,9 +72,10 @@ private fun AndroidSampleListScreen(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            AndroidSample.entries.forEach { sample ->
+            Sample.entries.forEach { sample ->
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth(),
                     onClick = { onSelect(sample) },
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
