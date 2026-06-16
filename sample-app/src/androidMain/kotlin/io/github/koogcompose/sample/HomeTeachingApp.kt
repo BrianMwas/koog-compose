@@ -1,3 +1,4 @@
+@file:JvmName("HomeTeachingAppAndroid")
 package io.github.koogcompose.sample
 
 import android.content.Context
@@ -219,6 +220,7 @@ private fun HomeTeachingAppWithPersistence(
 
     val savedSessions by viewModel.savedSessions.collectAsState()
     val session by viewModel.session.collectAsState()
+    val koogContext by viewModel.currentContext.collectAsState()
 
     if (session == null) {
         SessionListScreen(
@@ -237,10 +239,11 @@ private fun HomeTeachingAppWithPersistence(
         )
     } else {
         val currentSession = session
-        if (currentSession != null) {
+        val currentContext = koogContext
+        if (currentSession != null && currentContext != null) {
             val chatState = rememberChatState(
                 handle = currentSession,
-                context = currentSession.context,
+                context = currentContext,
             )
             val currentPhase by viewModel.currentPhase.collectAsState(initial = "")
             val state by viewModel.appState.collectAsState()

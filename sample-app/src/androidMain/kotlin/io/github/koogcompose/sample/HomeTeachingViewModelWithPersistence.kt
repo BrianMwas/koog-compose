@@ -47,8 +47,17 @@ class HomeTeachingViewModelWithPersistence(
         get() = _session.value?.appState ?: context.stateStore?.stateFlow
             ?: MutableStateFlow(TeachingState())
 
+    private val _currentContext = MutableStateFlow<KoogComposeContext<TeachingState>?>(null)
+    val currentContext: StateFlow<KoogComposeContext<TeachingState>?> = _currentContext.asStateFlow()
+
     init {
         loadSessions()
+        // Update currentContext whenever session changes
+        viewModelScope.launch {
+            _session.collect { session ->
+                _currentContext.value = session?.context
+            }
+        }
     }
 
     private fun loadSessions() {
