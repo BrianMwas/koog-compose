@@ -40,7 +40,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             MaterialTheme {
-                AndroidSampleSelectorApp(modifier = Modifier.fillMaxSize())
+                AndroidSampleSelectorApp(
+                    modifier = Modifier.fillMaxSize(),
+                    activityResults = activityResults,
+                )
             }
         }
     }
@@ -80,10 +83,19 @@ private enum class AndroidSample(val title: String, val description: String, val
         description = "Same teaching agent wrapped in circuit breakers and degraded-mode handling.",
         library = "CircuitBreaker, retry/backoff, stuck detection, observability",
     ),
+    RunCoach(
+        title = "🏃 Run Coach",
+        description = "Reads GPS location and schedules a WorkManager background check-in " +
+            "that survives the app being closed.",
+        library = "Device tools (GPS), background jobs (WorkManager), KoogEventBus",
+    ),
 }
 
 @Composable
-private fun AndroidSampleSelectorApp(modifier: Modifier = Modifier) {
+private fun AndroidSampleSelectorApp(
+    activityResults: KoogActivityResultRegistry,
+    modifier: Modifier = Modifier,
+) {
     var providerSelection by remember { mutableStateOf<SampleProviderSelection?>(null) }
     var selected by remember { mutableStateOf<AndroidSample?>(null) }
 
@@ -110,6 +122,11 @@ private fun AndroidSampleSelectorApp(modifier: Modifier = Modifier) {
                 AndroidSample.TripPlanner -> SimpleTripPlannerApp(modifier = modifier, providerConfig = providerConfig)
                 AndroidSample.MultiAgent -> MultiAgentSample(modifier = modifier, providerConfig = providerConfig)
                 AndroidSample.RobustTeaching -> SimpleRobustTeachingApp(modifier = modifier, providerConfig = providerConfig)
+                AndroidSample.RunCoach -> RunCoachApp(
+                    activityResults = activityResults,
+                    modifier = modifier,
+                    providerConfig = providerConfig,
+                )
                 null -> Unit
             }
         }
