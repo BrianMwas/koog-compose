@@ -1,30 +1,76 @@
-# koog-compose
+# koog-compose — AI Agents for Compose Multiplatform
+
+**Build on-device AI agents in Kotlin Multiplatform. One DSL for LLM conversations, device tools, multi-step flows, and streaming Compose UI — no server required.**
 
 [![Maven Central](https://img.shields.io/maven-central/v/io.github.brianmwas.koog_compose/koog-compose-core?label=Maven%20Central)](https://central.sonatype.com/search?q=io.github.brianmwas.koog_compose)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Kotlin](https://img.shields.io/badge/kotlin-2.3.20-purple.svg)](https://kotlinlang.org)
+[![Built on Koog](https://img.shields.io/badge/built%20on-JetBrains%20Koog-orange.svg)](https://github.com/JetBrains/koog)
 [![KMP](https://img.shields.io/badge/platform-Android%20%7C%20iOS%20%7C%20Desktop-brightgreen.svg)](https://www.jetbrains.com/kotlin-multiplatform/)
 
-**A Kotlin Multiplatform runtime for building on-device AI agents.**
+<!-- TODO: Record a 15s demo of the sample app (streaming tokens + confirmation sheet) and drop it here. This is the single highest-converting element of the README. -->
+<!-- ![koog-compose demo](docs/assets/demo.gif) -->
 
-koog-compose lets you write a single `koogCompose { }` block that manages your LLM conversation, runs device tools (GPS, alarms, screen blocking), handles multi-step flows, and streams tokens to your Compose UI — with no server required.
+koog-compose lets you write a single `koogCompose { }` block that manages your LLM conversation, runs device tools (GPS, alarms, screen blocking), handles multi-step phase flows, and streams tokens straight into your Jetpack Compose / Compose Multiplatform UI.
 
-Built on [JetBrains Koog](https://github.com/JetBrains/koog).
-
-**Production-ready security**: All tool calls enforce guardrails (rate limits, allowlists, confirmations) with full audit logging. Circuit breakers prevent cascading failures. Thread-safe for parallel tool execution.
+Built on [JetBrains Koog](https://github.com/JetBrains/koog), the official Kotlin framework for AI agents.
 
 ---
 
+## Why koog-compose?
 
+Most AI integrations treat the LLM as a text box. **koog-compose treats it as an orchestrator.**
 
+The user says *"I'm going for a run."* The agent starts a background GPS tracker, checks the weather, estimates duration from their history, and schedules a WorkManager task that survives the app being closed. When they say *"I'm back,"* it stops everything, calculates pace, and responds conversationally.
 
-## The core idea
+No buttons. No forms. No app-switching. **The conversation is the UI.**
 
-Most AI integrations treat the LLM as a text box. koog-compose treats it as an orchestrator.
+This works because koog-compose bridges two things that usually live in separate worlds: the LLM conversation loop and the device's native APIs. `KoogStateStore<S>` is shared state that flows from a tool result straight into your Compose UI via `StateFlow`. Device tools (location, alarms, screen time, camera) are first-class citizens of the agent graph — not afterthoughts bolted onto a chat widget.
 
-The user says *"I'm going for a run."* The agent starts a background GPS tracker, checks the weather, estimates duration from their history, and schedules a WorkManager task that survives the app being closed. When they say *"I'm back,"* it stops everything, calculates pace, and responds conversationally. No buttons. No forms. No app-switching. **The conversation is the UI.**
+|  | Raw Koog | Chat SDK widgets | **koog-compose** |
+|---|---|---|---|
+| Compose-native state (`StateFlow` → recomposition) | manual wiring | ❌ | ✅ built in |
+| Device tools (GPS, alarms, WorkManager) | build yourself | ❌ | ✅ first-class |
+| On-device inference (Gemma via LiteRT-LM, Apple FMs) | build yourself | ❌ | ✅ built in |
+| Tool guardrails + confirmation UI | build yourself | ❌ | ✅ built in |
+| Multi-step phase flows with auto-routing | graph DSL | ❌ | ✅ declarative DSL |
+| Deterministic agent testing (no model calls) | partial | ❌ | ✅ testing DSL |
 
-This works because koog-compose bridges two things that usually live in separate worlds: the LLM conversation loop and the device's native APIs. `KoogStateStore<S>` is the shared state that flows from a tool result straight into your Compose UI via `StateFlow`. Device tools (location, alarms, screen time, camera) are first-class citizens of the agent graph, not afterthoughts bolted onto a chat widget.
+**Production-ready security:** every tool call enforces guardrails (rate limits, allowlists, confirmations) with full audit logging. Circuit breakers prevent cascading failures. Thread-safe parallel tool execution.
+
+---
+
+## Compatibility
+
+| koog-compose | Koog | Kotlin | Compose Multiplatform |
+|---|---|---|---|
+| 2.1.0 (current) | <!-- TODO: verify --> 1.0.0 | 2.3.20 | <!-- TODO: fill --> |
+| 0.1.x (legacy) | 0.x | 2.2.x | <!-- TODO: fill --> |
+
+> Koog 1.0 removed all previously deprecated APIs. If you're upgrading from koog-compose 0.1.x, see the [migration notes](#) <!-- TODO: link CHANGELOG/migration guide -->.
+
+---
+
+## Table of contents
+
+- [Quick start](#quick-start)
+- [Core concepts](#core-concepts)
+  - [Phases](#phases)
+  - [Shared state](#shared-state)
+  - [Writing a tool](#writing-a-tool)
+  - [Streaming](#streaming)
+  - [Generative UI layout](#generative-ui-layout)
+- [On-device models & privacy](#on-device-models--privacy)
+- [Multi-agent handoff](#multi-agent-handoff)
+- [Observability & event tracking](#observability--event-tracking)
+- [Persistence](#persistence)
+- [Session creation patterns](#session-creation-patterns)
+- [Error handling & resilience](#error-handling--resilience)
+- [Testing](#testing)
+- [Platform support](#platform-support)
+- [Modules](#modules)
+- [FAQ](#faq)
+- [Contributing](#contributing)
 
 ---
 
@@ -34,14 +80,14 @@ This works because koog-compose bridges two things that usually live in separate
 
 ```kotlin
 dependencies {
-    implementation("io.github.brianmwas.koog_compose:koog-compose-core:2.0.0")
+    implementation("io.github.brianmwas.koog_compose:koog-compose-core:2.1.0")
 
     // Optional modules — add what you need
-    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:2.0.0")           // Material 3 chat components
-    implementation("io.github.brianmwas.koog_compose:koog-compose-device:2.0.0")       // GPS, alarms, WorkManager (Android)
-    implementation("io.github.brianmwas.koog_compose:koog-compose-mediapipe:2.0.0")    // On-device models (Gemma 4, Apple FMs)
-    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:2.0.0") // Room-backed session persistence
-    implementation("io.github.brianmwas.koog_compose:koog-compose-testing:2.0.0")      // Test utilities
+    implementation("io.github.brianmwas.koog_compose:koog-compose-ui:2.1.0")           // Material 3 chat components
+    implementation("io.github.brianmwas.koog_compose:koog-compose-device:2.1.0")       // GPS, alarms, WorkManager (Android)
+    implementation("io.github.brianmwas.koog_compose:koog-compose-mediapipe:2.1.0")    // On-device models (Gemma, Apple FMs)
+    implementation("io.github.brianmwas.koog_compose:koog-compose-session-room:2.1.0") // Room-backed session persistence
+    implementation("io.github.brianmwas.koog_compose:koog-compose-testing:2.1.0")      // Test utilities
 }
 ```
 
@@ -112,54 +158,10 @@ val runCoach = koogCompose<RunState> {
 }
 ```
 
-### 5. Wire it to a ViewModel (or use Compose directly)
+### 5. Wire it up
 
-**Option A: ViewModel + Compose** (traditional)
-```kotlin
-class RunViewModel(context: KoogComposeContext<RunState>, executor: PromptExecutor) : ViewModel() {
-    val session = phaseSession(context, executor) {
-        sessionId = "run_brian"
-        scope = viewModelScope
-    }
+**Pure Compose** (recommended for new code):
 
-    val responseStream = session.responseStream  // Flow<String> — tokens as they arrive
-    val runState       = session.appState        // StateFlow<RunState>
-}
-```
-
-**Option B: Pure Compose** (recommended for new code)
-```kotlin
-@Composable
-fun RunScreen(definition: KoogDefinition<RunState> = koogCompose { ... }) {
-    val session = rememberPhaseSession(definition) {
-        sessionId = "run_brian"
-    }
-
-    val responseStream = session.responseStream
-    val runState by session.appState.collectAsState()
-}
-```
-
-### 6. Render it
-
-**With ViewModel:**
-```kotlin
-@Composable
-fun RunScreen(viewModel: RunViewModel = viewModel()) {
-    val chatState = rememberChatState(viewModel.session)
-    val runState  by viewModel.runState.collectAsState()
-
-    if (runState.isRunning) {
-        Text("Running — ${runState.distanceKm} km")
-    }
-
-    Scaffold(bottomBar = { ChatInputBar(chatState) }) { padding ->
-        ChatMessageList(chatState, modifier = Modifier.padding(padding))
-    }
-}
-```
-
-**Pure Compose (no ViewModel):**
 ```kotlin
 @Composable
 fun RunScreen(definition: KoogDefinition<RunState> = koogCompose { ... }) {
@@ -178,9 +180,25 @@ fun RunScreen(definition: KoogDefinition<RunState> = koogCompose { ... }) {
 }
 ```
 
+**ViewModel + Compose** (traditional):
+
+```kotlin
+class RunViewModel(context: KoogComposeContext<RunState>, executor: PromptExecutor) : ViewModel() {
+    val session = phaseSession(context, executor) {
+        sessionId = "run_brian"
+        scope = viewModelScope
+    }
+
+    val responseStream = session.responseStream  // Flow<String> — tokens as they arrive
+    val runState       = session.appState        // StateFlow<RunState>
+}
+```
+
+That's it — a phase-driven AI agent with device tools, streaming into Compose.
+
 ---
 
-## How it works
+## Core concepts
 
 ### Phases
 
@@ -283,15 +301,9 @@ val displayText by remember {
 
 ### Generative UI layout
 
-The layout engine lets the agent drive *what UI is shown* through a small, declarative
-vocabulary instead of free-form code generation. The agent emits
-`AgentLayoutDirective`s — `ShowComponent`, `HideComponent`, `ReorderComponents`,
-`SwapComponent`, `LockComponent` — into named, host-declared **slots**. Each directive
-runs through a validation pipeline (`SchemaValidation → PolicyCheck → SlotConstraintCheck
-→ Reduce`) before it touches the live `LayoutState` your Compose UI renders.
+The layout engine lets the agent drive *what UI is shown* through a small, declarative vocabulary instead of free-form code generation. The agent emits `AgentLayoutDirective`s — `ShowComponent`, `HideComponent`, `ReorderComponents`, `SwapComponent`, `LockComponent` — into named, host-declared **slots**. Each directive runs through a validation pipeline (`SchemaValidation → PolicyCheck → SlotConstraintCheck → Reduce`) before it touches the live `LayoutState` your Compose UI renders.
 
-Every directive carries a `correlationId`, and the engine publishes a `DirectiveOutcome`
-the agent reads back on its next turn:
+Every directive carries a `correlationId`, and the engine publishes a `DirectiveOutcome` the agent reads back on its next turn:
 
 | Outcome | Meaning |
 |---------|---------|
@@ -300,11 +312,7 @@ the agent reads back on its next turn:
 | `Rejected` | Dropped; `rejectedAt` names the pipeline stage that refused it. |
 | `Coalesced` | Deduplicated against an in-flight directive with the same `correlationId`. |
 
-**`positionFallback`** — `ShowComponent` can request a relative `Position.Before(ref)` or
-`Position.After(ref)`. If the referenced component isn't in the slot, the engine silently
-appends to the end instead of rejecting the directive. When that happens, the `Accepted`
-(or `Rewritten`) outcome carries `positionFallback = true`, so the agent can detect that
-its requested ordering wasn't honored and correct course on the next turn:
+**`positionFallback`** — `ShowComponent` can request a relative `Position.Before(ref)` or `Position.After(ref)`. If the referenced component isn't in the slot, the engine silently appends to the end instead of rejecting the directive. When that happens, the `Accepted` (or `Rewritten`) outcome carries `positionFallback = true`, so the agent can detect that its requested ordering wasn't honored and correct course on the next turn:
 
 ```kotlin
 processor.outcomes.collect { outcome ->
@@ -317,51 +325,7 @@ processor.outcomes.collect { outcome ->
 
 ---
 
-## Testing
-
-`koog-compose-testing` swaps the live provider for a scripted `FakePromptExecutor`. You test real phase transitions and tool dispatch without hitting a model.
-
-```kotlin
-@Test
-fun `"I'm back" transitions from running to finished`() {
-    val session = testPhaseSession(context) {
-        on("I'm back", phase = "running") {
-            transitionTo("finished")
-            callTool("StopTimer")
-            callTool("CalculateStats")
-            respondWith("Great run! 3.2 km in 18 minutes — 5:38 pace.")
-        }
-    }
-
-    session.send("I'm back")
-
-    assertPhase(session, "finished")
-    assertToolCalled(session, "StopTimer")
-    assertState(session) { assertFalse(it.isRunning) }
-}
-```
-
-Run tests without an emulator:
-
-```bash
-./gradlew :koog-compose-core:desktopTest
-```
-
-**Test assertions:**
-
-| Assertion | Purpose |
-|-----------|---------|
-| `assertPhase(session, "phase_name")` | Verify current phase |
-| `assertToolCalled(session, "ToolName")` | Verify tool was invoked |
-| `assertToolNotCalled(session, "ToolName")` | Verify tool was NOT invoked |
-| `assertState(session) { block }` | Assert app state with lambda |
-| `assertResponse(session, "text")` | Verify agent response contains text |
-
-This DSL approach makes tests **deterministic** and **fast** — no network calls, no model inference, no flakiness.
-
----
-
-### On-device models & Privacy
+## On-device models & privacy
 
 koog-compose runs inference locally on the device by default — **no API key, no network call, all data stays on-device**.
 
@@ -389,12 +353,7 @@ provider {
 | User revokes permissions | Tool execution denied, conversation continues | ✅ On-device, no network |
 | Tool calls device APIs (GPS, camera) | Local, permission-gated | ✅ On-device, gated by OS permissions |
 
-**Important:** If you use `onUnavailable { anthropic(...) }` as a fallback, that provider will see:
-- Full conversation history (messages + tool results)
-- Tool names and arguments
-- Application context (phase name, session ID)
-
-If this is unacceptable, use `onUnavailable { throw UnsupportedOperationException(...) }` instead — users will see the error, but no data leaves the device.
+**Important:** if you use `onUnavailable { anthropic(...) }` as a fallback, that provider will see the full conversation history (messages + tool results), tool names and arguments, and application context (phase name, session ID). If this is unacceptable, use `onUnavailable { throw UnsupportedOperationException(...) }` instead — users will see the error, but no data leaves the device.
 
 | Platform | Backend | Scope |
 |---|---|---|
@@ -402,9 +361,19 @@ If this is unacceptable, use `onUnavailable { throw UnsupportedOperationExceptio
 | iOS | Apple Foundation Models (iOS 26+) | ✅ On-device |
 | Desktop | — | Planned |
 
-On Android, koog-compose disables LiteRT-LM's automatic tool calling loop so Gemma 4's `<tool_call>` responses are routed through koog's own `SecureTool` pipeline — validation and guardrails stay active regardless of the model backend.
+On Android, koog-compose disables LiteRT-LM's automatic tool calling loop so Gemma's `<tool_call>` responses are routed through koog-compose's own `SecureTool` pipeline — validation and guardrails stay active regardless of the model backend.
 
-### Multi-agent handoff
+koog-compose does not transmit prompts, responses, tool args, or telemetry anywhere. You own the `SessionStore`. Audit logs stay in-memory only, with optional PII redaction:
+
+```kotlin
+config {
+    auditLog { redactArgs = true }
+}
+```
+
+---
+
+## Multi-agent handoff
 
 Define specialist agents and the orchestrator delegates to them automatically:
 
@@ -429,7 +398,9 @@ val session = koogSession<Unit> {
 }
 ```
 
-### Observability & event tracking
+---
+
+## Observability & event tracking
 
 Route structured lifecycle events to Firebase, Datadog, a local database, or any custom backend. Events capture every significant moment: session starts, phase transitions, tool calls, guardrails denying access, stuck detection, and failures.
 
@@ -455,7 +426,6 @@ Events emitted at runtime:
 | `TurnFailed` | Retry exhausted after N attempts | Error rates, provider reliability |
 | `CircuitBreakerOpened` | A `CircuitBreakerGuard` trips OPEN after repeated failures | Degraded-mode banners, dependency alerting |
 | `CircuitBreakerClosed` | A tripped breaker recovers to CLOSED | Recovery tracking, clearing degraded UI |
-| `LLMRequested` | (Reserved for future use) | — |
 
 Implement a custom sink by extending `EventSink`:
 
@@ -463,47 +433,18 @@ Implement a custom sink by extending `EventSink`:
 class FirebaseEventSink(private val analytics: FirebaseAnalytics) : EventSink {
     override suspend fun emit(event: AgentEvent) {
         val bundle = when (event) {
-            is AgentEvent.SessionStarted -> Bundle().apply {
-                putString("initialPhase", event.initialPhase)
-            }
             is AgentEvent.ToolCalled -> Bundle().apply {
                 putString("toolName", event.toolName)
-                putString("result", event.result.toString())
             }
             is AgentEvent.PhaseTransitioned -> Bundle().apply {
                 putString("from", event.from)
                 putString("to", event.to)
-            }
-            is AgentEvent.GuardrailDenied -> Bundle().apply {
-                putString("reason", event.reason)
-                putString("toolName", event.toolName)
-            }
-            is AgentEvent.AgentStuck -> Bundle().apply {
-                putInt("consecutiveCount", event.consecutiveCount)
-                putString("fallback", event.fallbackMessage)
-            }
-            is AgentEvent.TurnFailed -> Bundle().apply {
-                putString("errorMessage", event.message)
-                putString("phase", event.phase)
             }
             else -> Bundle()
         }
         analytics.logEvent(event::class.simpleName ?: "AgentEvent", bundle)
     }
 }
-```
-
-Wire in development, production, and test builds separately:
-
-```kotlin
-// In your DI container or ViewModel factory
-val eventSink = when {
-    BuildConfig.DEBUG    -> PrintlnEventSink
-    BuildConfig.FIREBASE -> FirebaseEventSink(analytics)
-    else                 -> NoOpEventSink
-}
-
-config { eventSink = eventSink }
 ```
 
 Events are emitted from within coroutines and the sink is safe to suspend — use `emit(event)` to write to databases, call remote APIs, or batch events without blocking the agent.
@@ -540,41 +481,6 @@ phase("respond") {
 
 ## Persistence
 
-### Session creation (DSL-consistent)
-
-Create sessions using the `phaseSession()` DSL builder for consistency with `koogCompose { }`:
-
-```kotlin
-// In ViewModel
-class MyViewModel(context: KoogComposeContext<MyState>, executor: PromptExecutor) : ViewModel() {
-    val session = phaseSession(context, executor) {
-        sessionId = "my_session"
-        scope = viewModelScope
-        store = RoomSessionStore(db.sessionDao())
-    }
-}
-```
-
-Or in Compose:
-```kotlin
-@Composable
-fun MyScreen(definition: KoogDefinition<MyState>) {
-    val session = rememberPhaseSession(definition) {
-        sessionId = "my_screen_session"
-        store = RedisSessionStore()
-    }
-}
-```
-
-All parameters are optional; defaults are sensible:
-- `sessionId` — defaults to `"default"`
-- `scope` — defaults to `Dispatchers.Default`
-- `store` — defaults to `InMemorySessionStore()`
-- `strategyName` — defaults to `"koog-compose-phases"`
-- `eventHandlers` — defaults to `EventHandlers.Empty`
-
-### Session storage
-
 Drop in Room-backed persistence by passing a custom `store`:
 
 ```kotlin
@@ -609,28 +515,26 @@ val migration = object : StateMigration<AppState> {
 }
 ```
 
-**How chaining works:**
-- If stored version is 1 and current is 3: `v1 → v2` runs, then `v2 → v3` runs
-- Each step transforms the JSON once
-- All steps happen before the app sees the state
-
-**Quick migrations** (no explicit handler needed):
-- Added fields with defaults — handled automatically
-- Removed fields — ignored automatically
-- Use `ignoreUnknownKeys` + `coerceInputValues` in serializer
-
-**Explicit migrations** only for:
-- Renamed fields
-- Retyped fields (e.g., `String` → `Int`)
-- Complex transformations (e.g., splitting one field into many)
+**Quick migrations** (no explicit handler needed): added fields with defaults and removed fields are handled automatically — use `ignoreUnknownKeys` + `coerceInputValues` in your serializer. **Explicit migrations** are only needed for renamed fields, retyped fields, or complex transformations.
 
 ---
 
-## Session Creation Patterns
+## Session creation patterns
 
-koog-compose is DSL-first. All three ways to create a session follow the same builder pattern for consistency:
+koog-compose is DSL-first. All three ways to create a session follow the same builder pattern:
 
-### 1. **Non-Compose (ViewModel, Services)**
+**1. Compose (recommended for new code)** — `rememberPhaseSession()` binds to the Compose lifecycle, uses `lifecycleScope`, and memoizes across recompositions:
+
+```kotlin
+@Composable
+fun MyScreen(definition: KoogDefinition<MyState> = koogCompose { ... }) {
+    val session = rememberPhaseSession(definition) {
+        sessionId = "my_screen_session"
+    }
+}
+```
+
+**2. Non-Compose (ViewModel, Services):**
 
 ```kotlin
 class MyViewModel(context: KoogComposeContext<MyState>, executor: PromptExecutor) : ViewModel() {
@@ -642,25 +546,7 @@ class MyViewModel(context: KoogComposeContext<MyState>, executor: PromptExecutor
 }
 ```
 
-All parameters except `context` and `executor` are optional.
-
-### 2. **Compose (recommended for new code)**
-
-```kotlin
-@Composable
-fun MyScreen(definition: KoogDefinition<MyState> = koogCompose { ... }) {
-    val session = rememberPhaseSession(definition) {
-        sessionId = "my_screen_session"
-    }
-}
-```
-
-`rememberPhaseSession()` automatically:
-- Binds to the Compose lifecycle
-- Uses `lifecycleScope` (no need to pass `scope`)
-- Memoizes across recompositions
-
-### 3. **Bridge Pattern (when you already have a definition)**
+**3. Bridge pattern (when you already have a definition):**
 
 ```kotlin
 val definition = koogCompose<MyState> { ... }
@@ -669,7 +555,143 @@ val session = definition.createPhaseSession(executor, viewModelScope) {
 }
 ```
 
-All three patterns are equivalent; choose based on your UI framework.
+All parameters are optional with sensible defaults: `sessionId = "default"`, `scope = Dispatchers.Default`, `store = InMemorySessionStore()`, `strategyName = "koog-compose-phases"`, `eventHandlers = EventHandlers.Empty`.
+
+---
+
+## Error handling & resilience
+
+### Recovery hints
+
+Tool failures carry metadata to guide the agent's recovery strategy:
+
+```kotlin
+class SavePhotoTool : StatefulTool<AppState>() {
+    override suspend fun execute(args: JsonObject): ToolResult {
+        return try {
+            saveFile(args["path"]?.content ?: "")
+            ToolResult.Success("Saved")
+        } catch (e: IOException) when {
+            e.isNetworkRelated() -> ToolResult.Failure(
+                message = "Network hiccup. Retrying shortly...",
+                retryable = true,                           // Agent can retry automatically
+                recoveryHint = RecoveryHint.RetryAfterDelay // With backoff
+            )
+            e.isStorageFull() -> ToolResult.Denied(
+                reason = "Storage full",
+                recoveryHint = RecoveryHint.RequiresUserAction(
+                    "Please free up space and say 'try again'"
+                )
+            )
+            else -> ToolResult.Failure("Couldn't save", retryable = false)
+        }
+    }
+}
+```
+
+| Hint | Use case |
+|------|----------|
+| `RetryAfterDelay` | Transient failures (network timeout, rate limit) |
+| `RequiresUserAction` | User action needed (permission, confirmation) |
+| `DegradedFallback` | Fall back to limited functionality instead of crashing |
+| `None` | Permanent failure, don't retry |
+
+### Circuit breaker
+
+Prevent cascading failures when an external service keeps failing:
+
+```kotlin
+val breaker = CircuitBreaker(failureThreshold = 5, cooldownMs = 60_000)
+val tool = CircuitBreakerGuard(
+    delegate = SavePhotoTool(stateStore),
+    circuitBreaker = breaker,
+    sessionId = session.id,        // optional
+    eventSink = myEventSink,       // optional — emits CircuitBreakerOpened/Closed
+)
+```
+
+States: **CLOSED** (normal) → failures counted; **OPEN** (broken) → calls rejected immediately; **HALF_OPEN** (trial) → one success closes it, one failure reopens. The breaker counts thrown exceptions **and** `ToolResult.Failure` as failures; `ToolResult.Denied` (policy/user denials) are not counted.
+
+### Session corruption recovery
+
+```kotlin
+val result = store.loadOrRecover(sessionId)
+when (result) {
+    is SessionLoadResult.Success   -> session = resumeSession(result.session)
+    is SessionLoadResult.Recovered -> {
+        showMessage(result.reason)  // "Session corrupted, starting fresh"
+        session = startNewSession()
+    }
+    is SessionLoadResult.NotFound  -> { }
+}
+```
+
+### Retry with backoff
+
+```kotlin
+config {
+    retry {
+        maxAttempts = 3
+        initialDelayMs = 1_000
+        backoffMultiplier = 2.0   // 1s → 2s → 4s
+    }
+}
+```
+
+### Error mapping for users
+
+Never show raw exceptions to users — map internal errors to friendly messages inside your tools:
+
+```kotlin
+catch (e: IOException) {
+    val userMessage = when {
+        e.isNetworkRelated() -> "Internet connection problem — trying again..."
+        e.isStorageFull()    -> "Your device is full — please free up space"
+        else                 -> "Something went wrong — our team is aware"
+    }
+    ToolResult.Failure(userMessage, retryable = false)
+}
+```
+
+---
+
+## Testing
+
+`koog-compose-testing` swaps the live provider for a scripted `FakePromptExecutor`. You test real phase transitions and tool dispatch without hitting a model — **deterministic, fast, no network, no flakiness**.
+
+```kotlin
+@Test
+fun `"I'm back" transitions from running to finished`() {
+    val session = testPhaseSession(context) {
+        on("I'm back", phase = "running") {
+            transitionTo("finished")
+            callTool("StopTimer")
+            callTool("CalculateStats")
+            respondWith("Great run! 3.2 km in 18 minutes — 5:38 pace.")
+        }
+    }
+
+    session.send("I'm back")
+
+    assertPhase(session, "finished")
+    assertToolCalled(session, "StopTimer")
+    assertState(session) { assertFalse(it.isRunning) }
+}
+```
+
+Run tests without an emulator:
+
+```bash
+./gradlew :koog-compose-core:desktopTest
+```
+
+| Assertion | Purpose |
+|-----------|---------|
+| `assertPhase(session, "phase_name")` | Verify current phase |
+| `assertToolCalled(session, "ToolName")` | Verify tool was invoked |
+| `assertToolNotCalled(session, "ToolName")` | Verify tool was NOT invoked |
+| `assertState(session) { block }` | Assert app state with lambda |
+| `assertResponse(session, "text")` | Verify agent response contains text |
 
 ---
 
@@ -703,157 +725,33 @@ All three patterns are equivalent; choose based on your UI framework.
 
 ---
 
-## Error Handling & Resilience
+## FAQ
 
-koog-compose provides production-grade error recovery patterns to keep your agent running even when dependencies fail.
+**How is this different from JetBrains Koog?**
+Koog is the agent framework — the graph engine, LLM clients, and tool protocol. koog-compose is the mobile runtime on top: Compose-native state, device tools, on-device inference, guardrail/confirmation UI, phase DSL, and testing utilities. If you're building an agent into a Kotlin Multiplatform or Android app, you use both — koog-compose pulls Koog in for you.
 
-### Recovery Hints
+**Does it work offline?**
+Yes. With an on-device provider (Gemma via LiteRT-LM on Android, Apple Foundation Models on iOS), the entire agent — inference, tools, state — runs with no network at all.
 
-Tool failures now carry metadata to guide the agent's recovery strategy:
+**Can I use it with OpenAI / Anthropic / Ollama instead of on-device models?**
+Yes. Any provider Koog supports works via the `provider { }` block, and you can chain fallbacks (`onDevice → cloud`).
 
-```kotlin
-class SavePhotoTool : StatefulTool<AppState>() {
-    override suspend fun execute(args: JsonObject): ToolResult {
-        return try {
-            saveFile(args["path"]?.content ?: "")
-            ToolResult.Success("Saved")
-        } catch (e: IOException) when {
-            e.isNetworkRelated() -> ToolResult.Failure(
-                message = "Network hiccup. Retrying shortly...",
-                retryable = true,                           // Agent can retry automatically
-                recoveryHint = RecoveryHint.RetryAfterDelay // With backoff
-            )
-            e.isStorageFull() -> ToolResult.Denied(
-                reason = "Storage full",
-                recoveryHint = RecoveryHint.RequiresUserAction(
-                    "Please free up space and say 'try again'"
-                )
-            )
-            else -> ToolResult.Failure("Couldn't save", retryable = false)
-        }
-    }
-}
-```
+**Do I have to use the chat UI components?**
+No. `koog-compose-ui` is optional — the core exposes `StateFlow`/`Flow` primitives you can render with any Compose UI you like.
 
-Recovery hint types:
-
-| Hint | Use Case |
-|------|----------|
-| `RetryAfterDelay` | Transient failures (network timeout, rate limit) |
-| `RequiresUserAction` | User action needed (permission, confirmation) |
-| `DegradedFallback` | Fall back to limited functionality instead of crashing |
-| `None` | Permanent failure, don't retry |
-
-### Circuit Breaker
-
-Prevent cascading failures when an external service keeps failing:
-
-```kotlin
-val breaker = CircuitBreaker(failureThreshold = 5, cooldownMs = 60_000)
-val tool = CircuitBreakerGuard(
-    delegate = SavePhotoTool(stateStore),
-    circuitBreaker = breaker
-)
-
-// After 5 failures: circuit opens, returns user-friendly message
-// After 60s cooldown: circuit enters half-open (trial mode)
-// On success: circuit closes, normal operation resumed
-```
-
-The circuit breaker counts both thrown exceptions **and** `ToolResult.Failure` as failures. `ToolResult.Denied` (policy/user denials) are not counted — they're not service failures.
-
-States:
-- **CLOSED** (normal) → failures counted
-- **OPEN** (broken) → calls rejected immediately
-- **HALF_OPEN** (trial) → one success closes it, one failure reopens
-
-Pass a `sessionId` and an `EventSink` to observe state transitions — the guard emits
-`AgentEvent.CircuitBreakerOpened` when it trips and `AgentEvent.CircuitBreakerClosed`
-when it recovers, so you can surface degraded-mode banners or alert your backend:
-
-```kotlin
-val tool = CircuitBreakerGuard(
-    delegate = SavePhotoTool(stateStore),
-    circuitBreaker = breaker,
-    sessionId = session.id,
-    eventSink = myEventSink,   // routes to Firebase / Datadog / logs
-)
-```
-
-Both parameters are optional (default: no session id, `NoOpEventSink`), so existing
-call sites keep working unchanged.
-
-### Session Corruption Recovery
-
-Sessions corrupted by storage errors are detected and recovered:
-
-```kotlin
-val store = RoomSessionStore(dao, serializer)
-
-// Load with automatic recovery
-val result = store.loadOrRecover(sessionId)
-when (result) {
-    is SessionLoadResult.Success -> {
-        session = resumeSession(result.session)
-    }
-    is SessionLoadResult.Recovered -> {
-        showMessage(result.reason)  // "Session corrupted, starting fresh"
-        session = startNewSession()
-    }
-    is SessionLoadResult.NotFound -> { }
-}
-```
-
-### Retry with Backoff
-
-Configure automatic retries in your session config:
-
-```kotlin
-config {
-    retry {
-        maxAttempts = 3
-        initialDelayMs = 1_000
-        backoffMultiplier = 2.0   // 1s → 2s → 4s
-    }
-}
-```
-
-### Error Mapping for Users
-
-Never show raw exceptions to users. Map internal errors to friendly messages:
-
-```kotlin
-// Inside your tool
-catch (e: IOException) {
-    val userMessage = when {
-        e.isNetworkRelated() -> "Internet connection problem — trying again..."
-        e.isStorageFull() -> "Your device is full — please free up space"
-        else -> "Something went wrong — our team is aware"
-    }
-    ToolResult.Failure(userMessage, retryable = false)
-}
-```
-
----
-
-## Privacy
-
-All data stays on the device by default. koog-compose does not transmit prompts, responses, tool args, or telemetry anywhere. You own the `SessionStore`. Audit logs stay in-memory only, with optional PII redaction:
-
-```kotlin
-config {
-    auditLog { redactArgs = true }
-}
-```
+**Is it production-ready?**
+The security pipeline (guardrails, confirmations, audit logging, circuit breakers) is designed for production use. The library is pre-1.0 in spirit — APIs may still evolve between minor versions; pin your version and read release notes.
 
 ---
 
 ## Contributing
 
-Bug reports and feature requests → [GitHub Issues](https://github.com/brianmwas/koog-compose/issues)
-Questions → [GitHub Discussions](https://github.com/brianmwas/koog-compose/discussions)
+Bug reports and feature requests → [GitHub Issues](https://github.com/BrianMwas/koog-compose/issues)
+Questions → [GitHub Discussions](https://github.com/BrianMwas/koog-compose/discussions)
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR. Issues labeled `good first issue` are a great place to start.
+
+If koog-compose is useful to you, **a ⭐ helps other Kotlin developers find it.**
 
 ---
 
