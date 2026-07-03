@@ -7,6 +7,7 @@ import io.github.koogcompose.tool.SecureTool
 import io.github.koogcompose.tool.ToolResult
 import io.github.koogcompose.tool.PermissionLevel
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 
 /**
@@ -40,6 +41,15 @@ public abstract class BackgroundSecureTool(
     public abstract fun buildInputData(args: Map<String, String>): Map<String, String>
 
     /**
+     * The unique work name for this job. Override to return a *stable* name so
+     * the job can be re-observed after the app process is recreated — WorkManager
+     * persists work by unique name and replays the last status when a fresh
+     * [WorkManagerObserver] attaches. Defaults to a random name (a new job per call).
+     */
+    protected open fun resolveJobId(args: Map<String, String>): String =
+        "$name-${UUID.randomUUID()}"
+
+    /**
      * Entry point called by the tool dispatch layer. Enqueues a background job
      * and returns immediately. The LLM sees a success message with the job ID.
      */
@@ -55,8 +65,12 @@ public abstract class BackgroundSecureTool(
             )
         }
 
-        val jobId = "$name-${UUID.randomUUID()}"
-        val inputData = buildInputData(args.mapValues { (_, v) -> v.toString() })
+        // JsonPrimitive.content strips the surrounding quotes a JsonElement.toString()
+        // would leave on string values (e.g. "30" -> 30, not "\"30\""), so downstream
+        // parsing like delaySeconds.toLongOrNull() sees the real value.
+        val stringArgs = args.mapValues { (_, v) -> (v as? JsonPrimitive)?.content ?: v.toString() }
+        val jobId = resolveJobId(stringArgs)
+        val inputData = buildInputData(stringArgs)
 
         jobProvider.enqueue(jobId, inputData)
 

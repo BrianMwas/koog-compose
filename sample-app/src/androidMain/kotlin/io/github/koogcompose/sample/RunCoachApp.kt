@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -27,6 +28,7 @@ import androidx.work.WorkerParameters
 import io.github.koogcompose.device.background.BackgroundSecureTool
 import io.github.koogcompose.device.background.KoogCoroutineWorker
 import io.github.koogcompose.device.background.WorkManagerJobProvider
+import io.github.koogcompose.device.background.WorkManagerObserver
 import io.github.koogcompose.device.location.GetCurrentLocationTool
 import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.event.KoogEventBus
@@ -44,6 +46,7 @@ import io.github.koogcompose.ui.components.ChatMessageList
 import io.github.koogcompose.ui.confirmation.ConfirmationObserver
 import io.github.koogcompose.ui.confirmation.rememberDialogConfirmationHandler
 import io.github.koogcompose.ui.state.rememberChatState
+import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -131,6 +134,15 @@ class StartCheckInTimerTool(
     override fun buildInputData(args: Map<String, String>): Map<String, String> {
         val delaySeconds = args["delaySeconds"] ?: "30"
         return mapOf(WorkManagerJobProvider.DELAY_SECONDS_KEY to delaySeconds)
+    }
+
+    // Stable unique work name (not a random UUID) so the app can re-observe this
+    // exact job after being force-closed and reopened — that's what lets the top
+    // bar show "completed" for a job that finished while the process was dead.
+    override fun resolveJobId(args: Map<String, String>): String = WORK_NAME
+
+    companion object {
+        const val WORK_NAME: String = "run_coach_check_in"
     }
 }
 
@@ -243,16 +255,35 @@ fun RunCoachApp(
 
     val stateStore = remember { KoogStateStore(RunState()) }
 
+    val eventScope = rememberCoroutineScope()
     DisposableEffect(eventBus, stateStore) {
         val handler = object : KoogEventHandler {
             override fun onEvent(event: KoogEvent) {
                 if (event is KoogEvent.BackgroundJobStatus) {
-                    stateStore.update { it.copy(checkInStatus = event.status) }
+                    // update is suspend; onEvent is not — hop onto a coroutine.
+                    eventScope.launch {
+                        stateStore.update { it.copy(checkInStatus = event.status) }
+                    }
                 }
             }
         }
         eventBus.register(handler)
         onDispose { eventBus.unregister(handler) }
+    }
+
+    // Re-attach to the check-in job by its stable work name. WorkManager persists
+    // finished work, so if the job completed while the app process was dead, this
+    // observer replays SUCCEEDED on reopen and the top bar shows "completed" —
+    // proving the job ran independent of the app. Must come after the handler above
+    // so the dispatched status is caught.
+    DisposableEffect(eventBus) {
+        val observer = WorkManagerObserver(
+            context = context,
+            jobId = StartCheckInTimerTool.WORK_NAME,
+            eventBus = eventBus,
+        )
+        observer.attach()
+        onDispose { observer.detach() }
     }
 
     var locationPermissionGranted by remember { mutableStateOf(false) }

@@ -31,7 +31,10 @@ kotlin {
             dependencies {
                 implementation(libs.play.services.location)
                 implementation(libs.androidx.core.ktx)
-                implementation(libs.androidx.work.runtime.ktx)
+                // api, not implementation: KoogCoroutineWorker is public API whose
+                // supertype (CoroutineWorker) and constructor param (WorkerParameters)
+                // leak through the API surface — consumers subclass it (e.g. RunCheckInWorker).
+                api(libs.androidx.work.runtime.ktx)
             }
         }
     }
