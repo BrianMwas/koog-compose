@@ -52,18 +52,22 @@ class TrackTopicTool(
  *
  * Usage:
  * ```kotlin
- * val context = buildDemoContext()
+ * val context = buildDemoContext(apiKey = "sk-...")
  * val executor = context.createExecutor()
  * val session = PhaseSession(context, executor, "my_session", scope = viewModelScope)
  * ```
+ *
+ * @param apiKey An OpenAI API key, e.g. entered by the user at startup via
+ *   [DemoApp]. This demo has no other provider wired up — see sample-app for
+ *   Ollama and on-device Gemma 4.
  */
-fun buildDemoContext(): KoogDefinition<AppState> {
+fun buildDemoContext(apiKey: String): KoogDefinition<AppState> {
     val greetTool = GreetUserTool(KoogStateStore(AppState()))
     val trackTool = TrackTopicTool(KoogStateStore(AppState()))
 
     val result = koogCompose<AppState> {
         provider {
-            openAI(apiKey = "your-api-key-here") {
+            openAI(apiKey = apiKey) {
                 model = "gpt-4o-mini"
             }
         }

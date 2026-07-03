@@ -36,6 +36,7 @@ import io.github.koogcompose.ui.components.ChatMessageList
 import io.github.koogcompose.ui.confirmation.ConfirmationObserver
 import io.github.koogcompose.ui.confirmation.rememberDialogConfirmationHandler
 import io.github.koogcompose.ui.state.rememberChatState
+import io.github.koogcompose.provider.ProviderConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -181,6 +182,7 @@ class BookTripTool(
  */
 fun buildTripPlannerContext(
     stateStore: KoogStateStore<TripState>,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
 ): KoogComposeContext<TripState> {
     val setTripDetails = SetTripDetailsTool(stateStore)
     val addItem = AddItineraryItemTool(stateStore)
@@ -189,7 +191,7 @@ fun buildTripPlannerContext(
 
     return koogCompose<TripState> {
         provider {
-            ollama(model = "llama3.2")
+            use(providerConfig)
         }
 
         config {
@@ -270,12 +272,15 @@ fun buildTripPlannerContext(
  * human-in-the-loop confirmation flow via the SENSITIVE [BookTripTool].
  */
 @Composable
-fun SimpleTripPlannerApp(modifier: Modifier = Modifier) {
+fun SimpleTripPlannerApp(
+    modifier: Modifier = Modifier,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
+) {
     val snackbarHostState = remember { SnackbarHostState() }
 
-    val session = remember {
+    val session = remember(providerConfig) {
         val stateStore = KoogStateStore(TripState())
-        val context = buildTripPlannerContext(stateStore)
+        val context = buildTripPlannerContext(stateStore, providerConfig = providerConfig)
         PhaseSession(
             context = context,
             executor = context.createExecutor(),

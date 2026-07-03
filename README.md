@@ -53,6 +53,7 @@ This works because koog-compose bridges two things that usually live in separate
 
 ## Table of contents
 
+- [Run the samples first](#run-the-samples-first)
 - [Quick start](#quick-start)
 - [Core concepts](#core-concepts)
   - [Phases](#phases)
@@ -71,6 +72,21 @@ This works because koog-compose bridges two things that usually live in separate
 - [Modules](#modules)
 - [FAQ](#faq)
 - [Contributing](#contributing)
+
+---
+
+## Run the samples first
+
+Two apps in this repo exercise the library. If you're cloning this to see what it does, start with **`sample-app`** — it's the real showcase and the fastest way to see the library working with your own credentials:
+
+| Module | What it is | When to open it |
+|---|---|---|
+| **`sample-app`** | 5 samples (Getting Started, Home Tutor, Trip Planner, Multi-Agent, Robust Teaching) behind a provider-setup screen where you paste an OpenAI key, point at a local Ollama, or pick on-device Gemma 4 (Android). | **Start here.** This is what to run first. |
+| **`composeApp`** | A ~100-line "hello world" — the smallest `koogCompose { }` block that runs. Also OpenAI, paste your key when it starts. | Once you understand the shape and want to see the minimal version stripped down. |
+
+Run `sample-app` on Android, iOS, or desktop; on first launch it shows a provider screen — pick **OpenAI** and paste a key to try it immediately, no local setup required. Switch to **Ollama** later once you have it running locally (`ollama serve`), or **On-device Gemma 4** on Android once you've pushed a `.litertlm` file to the device (see [On-device models & privacy](#on-device-models--privacy)). The provider choice is remembered for the rest of that run and applies to whichever sample you open next — no per-sample setup.
+
+> **Gemma without any local setup:** if you have Ollama running, `ollama pull gemma3:4b` and pick Ollama with model `gemma3:4b` in the setup screen — no LiteRT-LM or `.litertlm` file needed. On-device Gemma 4 via LiteRT-LM (fully offline, Android only) is the deeper integration described below.
 
 ---
 
@@ -343,6 +359,8 @@ provider {
     }
 }
 ```
+
+> Want to try Gemma without downloading a `.litertlm` file? `ollama pull gemma3:4b` and use `provider { ollama(model = "gemma3:4b") }` instead — same model family, runs through Ollama's server rather than fully offline. The `onDevice(...)` path above is for the zero-network, fully-offline case.
 
 **Data flow & privacy:**
 

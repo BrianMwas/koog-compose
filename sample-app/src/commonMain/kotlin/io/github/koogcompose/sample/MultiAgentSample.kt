@@ -22,9 +22,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import io.github.koogcompose.event.KoogEvent
+import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.ui.events.EventObserver
 import io.github.koogcompose.session.KoogSession
 import io.github.koogcompose.session.SessionRunnerHandle
@@ -36,9 +36,14 @@ import io.github.koogcompose.ui.components.ChatInputBar
 import io.github.koogcompose.ui.components.ChatMessageList
 import io.github.koogcompose.ui.state.rememberChatState
 
+/**
+ * Cross-platform entry point for the multi-agent handoff sample: a main
+ * agent that routes to focus/weather specialists via [handoff].
+ */
 @Composable
 fun MultiAgentSample(
     modifier: Modifier = Modifier,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
 ) {
     val focusAgent = remember {
         koogAgent("focus") {
@@ -64,10 +69,10 @@ fun MultiAgentSample(
         }
     }
 
-    val session: KoogSession<Unit> = remember(focusAgent, weatherAgent) {
+    val session: KoogSession<Unit> = remember(focusAgent, weatherAgent, providerConfig) {
         koogSession<Unit> {
             provider {
-                ollama(model = "llama3.2")
+                use(providerConfig)
             }
 
             main {
@@ -229,10 +234,4 @@ private fun AgentChip(
             style = MaterialTheme.typography.labelMedium,
         )
     }
-}
-
-@Preview(showBackground = true)
-@Composable
-private fun PreviewMultiAgentSample() {
-    MultiAgentSample()
 }

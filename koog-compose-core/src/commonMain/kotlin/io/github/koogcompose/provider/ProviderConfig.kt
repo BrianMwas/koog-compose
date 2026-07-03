@@ -203,6 +203,20 @@ public class ProviderConfigBuilder {
         config = RouterBuilder(strategy).apply(block).build()
     }
 
+    /**
+     * Uses an already-built [ProviderConfig] directly, bypassing the DSL builders.
+     * Handy when the provider is chosen dynamically (e.g. from user input or a
+     * settings screen) rather than known at compile time.
+     *
+     * ```kotlin
+     * val chosen: ProviderConfig = ProviderConfig.OpenAI(apiKey = userEnteredKey)
+     * provider { use(chosen) }
+     * ```
+     */
+    public fun use(config: ProviderConfig) {
+        this.config = config
+    }
+
     public fun build(): ProviderConfig = config
         ?: error("koog-compose: No provider configured. Call anthropic(), openAI(), or ollama() inside provider { }")
 }
