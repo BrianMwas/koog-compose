@@ -14,7 +14,7 @@ class DefaultLayoutDirectiveProcessorTest {
 
     @Test
     fun validShowComponent_isAccepted_andUpdatesLayoutState() = runTest {
-        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = this)
+        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = backgroundScope)
 
         processor.outcomes.test {
             processor.send(show("a", HERO, Position.End, DirectiveId("d1")))
@@ -35,7 +35,7 @@ class DefaultLayoutDirectiveProcessorTest {
 
     @Test
     fun showComponent_unknownComponent_isRejected() = runTest {
-        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = this)
+        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = backgroundScope)
 
         processor.outcomes.test {
             processor.send(show("unknown", HERO, Position.End, DirectiveId("d1")))
@@ -54,7 +54,7 @@ class DefaultLayoutDirectiveProcessorTest {
 
     @Test
     fun duplicateCorrelationId_withinTurn_isCoalesced() = runTest {
-        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = this)
+        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = backgroundScope)
         val directive = show("a", HERO, Position.End, DirectiveId("dup"))
 
         processor.outcomes.test {
@@ -72,7 +72,7 @@ class DefaultLayoutDirectiveProcessorTest {
 
     @Test
     fun beginTurn_resetsCoalescing_soRepeatedCorrelationIdIsProcessedAgain() = runTest {
-        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = this)
+        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = backgroundScope)
         val directive = show("a", HERO, Position.End, DirectiveId("dup"))
 
         processor.outcomes.test {
@@ -91,7 +91,7 @@ class DefaultLayoutDirectiveProcessorTest {
 
     @Test
     fun showComponent_positionBeforeMissingReference_surfacesPositionFallback() = runTest {
-        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = this)
+        val processor = DefaultLayoutDirectiveProcessor(testConfig(), scope = backgroundScope)
 
         processor.outcomes.test {
             processor.send(show("a", HERO, Position.Before(ComponentId("b")), DirectiveId("d1")))

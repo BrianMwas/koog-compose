@@ -58,6 +58,7 @@ fun SampleSelectorApp(modifier: Modifier = Modifier) {
                 Sample.TripPlanner -> SimpleTripPlannerApp(modifier = modifier, providerConfig = providerConfig)
                 Sample.MultiAgent -> MultiAgentSample(modifier = modifier, providerConfig = providerConfig)
                 Sample.RobustTeaching -> SimpleRobustTeachingApp(modifier = modifier, providerConfig = providerConfig)
+                Sample.MoneyCoach -> MoneyCoachApp(modifier = modifier, providerConfig = providerConfig)
                 null -> Unit
             }
         }
@@ -90,6 +91,13 @@ enum class Sample(val title: String, val description: String, val library: Strin
         title = "🛡️ Robust Teaching",
         description = "Same teaching agent wrapped in circuit breakers and degraded-mode handling.",
         library = "CircuitBreaker, retry/backoff, stuck detection, observability",
+    ),
+    MoneyCoach(
+        title = "💸 Money Coach",
+        description = "The agent answers by building the screen — it emits layout directives " +
+            "to show spend breakdowns and an FX chart, and the engine rejects any it is not " +
+            "permitted to show. Ambient gradient reflects the agent's tempo.",
+        library = "Layout directives, slots + tag/permission policy, AmbientGradient",
     ),
 }
 

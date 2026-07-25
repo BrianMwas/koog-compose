@@ -1,3 +1,4 @@
+import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -14,7 +15,15 @@ kotlin {
             jvmTarget.set(JvmTarget.JVM_17)
         }
     }
-    
+
+    // Desktop exists so the commonMain samples stay compilable and testable without
+    // an Android SDK. Every sample reachable from SampleSelectorApp must build here.
+    jvm("desktop") {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_17)
+        }
+    }
+
     // Configure iOS targets with shared iosMain source set (via default hierarchy)
     iosArm64()
     iosSimulatorArm64()
@@ -36,6 +45,17 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
         }
         
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
+        }
+
+        val desktopMain by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                implementation(libs.kotlinx.coroutines.swing)
+            }
+        }
+
         androidMain.dependencies {
             implementation(project(":koog-compose-session-room"))
             implementation(project(":koog-compose-mediapipe"))
@@ -81,6 +101,18 @@ android {
             excludes += "META-INF/INDEX.LIST"
             excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
             excludes += "META-INF/io.netty.versions.properties"
+        }
+    }
+}
+
+compose.desktop {
+    application {
+        mainClass = "io.github.koogcompose.sample.MainKt"
+
+        nativeDistributions {
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            packageName = "koog-compose-samples"
+            packageVersion = "0.1.0"
         }
     }
 }

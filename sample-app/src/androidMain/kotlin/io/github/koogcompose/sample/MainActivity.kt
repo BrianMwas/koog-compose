@@ -23,8 +23,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.github.koogcompose.layout.FormFactor
+import io.github.koogcompose.layout.Platform
 import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.sample.HomeTeachingApp
+import io.github.koogcompose.sample.expense.MoneyCoachApp
 
 class MainActivity : ComponentActivity() {
 
@@ -89,6 +92,19 @@ private enum class AndroidSample(val title: String, val description: String, val
             "that survives the app being closed.",
         library = "Device tools (GPS), background jobs (WorkManager), KoogEventBus",
     ),
+    MoneyCoach(
+        title = "💸 Money Coach",
+        description = "The agent answers by building the screen — it emits layout directives " +
+            "to show spend breakdowns and an FX chart, and the engine rejects any it is not " +
+            "permitted to show. Ambient gradient reflects the agent's tempo.",
+        library = "Layout directives, slots + tag/permission policy, AmbientGradient",
+    ),
+    MathTutor(
+        title = "🧮 Math Tutor (offline)",
+        description = "Fully on-device tutoring with Gemma 3 via LiteRT-LM. Downloads the " +
+            "model on first launch, then needs no network. Ignores the provider you picked.",
+        library = "On-device provider (LiteRT-LM), photo capture, tool orchestration",
+    ),
 }
 
 @Composable
@@ -127,6 +143,15 @@ private fun AndroidSampleSelectorApp(
                     modifier = modifier,
                     providerConfig = providerConfig,
                 )
+                AndroidSample.MoneyCoach -> MoneyCoachApp(
+                    modifier = modifier,
+                    providerConfig = providerConfig,
+                    platform = Platform.Android,
+                    formFactor = FormFactor.Phone,
+                )
+                // Runs Gemma 3 locally via LiteRT-LM, so it supplies its own
+                // on-device provider and ignores [providerConfig] by design.
+                AndroidSample.MathTutor -> MathTutorApp(modifier = modifier)
                 null -> Unit
             }
         }
