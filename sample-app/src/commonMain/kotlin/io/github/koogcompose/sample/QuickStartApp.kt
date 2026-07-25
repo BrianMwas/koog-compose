@@ -1,11 +1,13 @@
 package io.github.koogcompose.sample
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -13,11 +15,16 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.KoogStateStore
 import io.github.koogcompose.session.PhaseSession
@@ -35,14 +42,14 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlin.time.Clock
 
 /**
- * Simple cross-platform tutor app that works on iOS and Android.
- * 
- * No platform-specific features:
+ * The recommended first sample to run on a fresh clone — a minimal
+ * cross-platform tutor with no platform-specific features:
  * - No photo capture (SaveTopicPhoto)
  * - No database persistence (uses in-memory only)
  * - No microphone recording (HoldToRecordButton)
- * 
- * Perfect for demonstrating Compose Multiplatform on iOS!
+ *
+ * Works on Android, iOS, and desktop with just a provider config (e.g. an
+ * OpenAI key from [ProviderSetupScreen]) and nothing else to install.
  */
 
 @Serializable
@@ -95,14 +102,14 @@ class UpdateNameToolQuickStart(
  */
 suspend fun createQuickStartSession(
     stateStore: KoogStateStore<QuickStartState>,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
 ): PhaseSession<QuickStartState> {
     val recordConcept = RecordConceptToolQuickStart(stateStore)
     val updateName = UpdateNameToolQuickStart(stateStore)
 
     val context = koogCompose<QuickStartState> {
-        // Use the scripted test provider
         provider {
-            ollama(model = "test-model")
+            use(providerConfig)
         }
 
         initialState { stateStore.current }
@@ -170,13 +177,44 @@ suspend fun createQuickStartSession(
 }
 
 /**
+ * Cross-platform entry point for the "Getting Started" sample: builds a fresh
+ * [createQuickStartSession] for the given [providerConfig] and shows it. This
+ * is the sample to reach for first on a new clone — pick OpenAI and paste a
+ * key in [ProviderSetupScreen] and it should work with nothing else installed.
+ */
+@Composable
+fun SimpleQuickStartApp(
+    modifier: Modifier = Modifier,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
+) {
+    var session by remember(providerConfig) { mutableStateOf<PhaseSession<QuickStartState>?>(null) }
+
+    LaunchedEffect(providerConfig) {
+        session = createQuickStartSession(
+            stateStore = KoogStateStore(QuickStartState()),
+            providerConfig = providerConfig,
+        )
+    }
+
+    val current = session
+    if (current == null) {
+        Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    } else {
+        QuickStartAppUI(session = current, modifier = modifier)
+    }
+}
+
+/**
  * iOS/Android compatible composable that shows the QuickStart app.
- * 
+ *
  * This is the main entry point for sample-app on all platforms.
  */
 @Composable
 fun QuickStartAppUI(
     session: PhaseSession<QuickStartState>,
+    modifier: Modifier = Modifier,
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
     val chatState = rememberChatState(handle = session, context = session.context)
@@ -184,7 +222,7 @@ fun QuickStartAppUI(
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .statusBarsPadding()
     ) { innerPadding ->

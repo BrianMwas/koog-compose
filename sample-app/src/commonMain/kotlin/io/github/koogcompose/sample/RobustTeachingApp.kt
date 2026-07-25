@@ -1,8 +1,24 @@
 package io.github.koogcompose.sample
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import io.github.koogcompose.event.KoogEvent
 import io.github.koogcompose.observability.EventSink
 import io.github.koogcompose.observability.PrintlnEventSink
+import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.reliability.CircuitBreaker
 import io.github.koogcompose.reliability.CircuitBreakerGuard
 import io.github.koogcompose.session.KoogComposeContext
@@ -13,6 +29,9 @@ import io.github.koogcompose.tool.PermissionLevel
 import io.github.koogcompose.tool.RecoveryHint
 import io.github.koogcompose.tool.StatefulTool
 import io.github.koogcompose.tool.ToolResult
+import io.github.koogcompose.ui.components.ChatInputBar
+import io.github.koogcompose.ui.components.ChatMessageList
+import io.github.koogcompose.ui.state.rememberChatState
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -38,11 +57,22 @@ data class RobustAppState(
     val stateChecksum: String? = null,
 )
 
-@Suppress("UNUSED_PARAMETER")
+/**
+ * Builds the circuit-breaker / degraded-mode robustness sample.
+ *
+ * [modelPath] documents the on-device Gemma 4 model this sample is designed
+ * to eventually run against via `ProviderConfig.OnDevice` (see the README's
+ * "On-device models" section) — it isn't wired into [providerConfig]
+ * automatically since on-device wiring is a per-app choice (mediapipe
+ * module + a downloaded `.litertlm` file). Pass
+ * `providerConfig = ProviderConfig.OnDevice(modelPath = modelPath)` yourself
+ * once you have both in place.
+ */
 fun buildRobustTeachingSession(
     stateStore: KoogStateStore<RobustAppState> = KoogStateStore(RobustAppState()),
     eventSink: EventSink = PrintlnEventSink,
-    modelPath: String = "/data/models/gemma-4.litertlm",
+    modelPath: String = "/data/models/gemma-4-E2B.litertlm",
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
 ): PhaseSession<RobustAppState> {
     val fileOperationBreaker = CircuitBreaker(
         failureThreshold = 5,
@@ -57,9 +87,7 @@ fun buildRobustTeachingSession(
 
     val context = koogCompose<RobustAppState> {
         provider {
-            ollama(model = BuildConfig.OLLAMA_MODEL) {
-                baseUrl = BuildConfig.OLLAMA_BASE_URL
-            }
+            use(providerConfig)
         }
 
         initialState { stateStore.current }
@@ -201,8 +229,73 @@ internal class DegradedModeTeachingStrategy {
         "The model is available again. Let's continue with the full tutor."
 }
 
-object BuildConfig {
-    const val OLLAMA_MODEL: String = "llama3.2"
-    const val OLLAMA_BASE_URL: String = "http://localhost:11434"
-    const val ONDEVICE_MODEL_PATH: String = "/data/models/gemma-4.litertlm"
+/**
+ * Cross-platform entry point for the robustness sample: a single-phase
+ * teaching agent wrapped in circuit breakers, retry/backoff, and stuck
+ * detection, showing degraded-mode messaging when a tool keeps failing.
+ */
+@Composable
+fun SimpleRobustTeachingApp(
+    modifier: Modifier = Modifier,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
+) {
+    val session = remember(providerConfig) {
+        buildRobustTeachingSession(providerConfig = providerConfig)
+    }
+    val chatState = rememberChatState(handle = session, context = session.context)
+    val state by requireNotNull(session.appState).collectAsState()
+
+    Scaffold(
+        modifier = modifier
+            .fillMaxSize()
+            .statusBarsPadding(),
+        topBar = {
+            RobustTeachingTopBar(state)
+        },
+        bottomBar = {
+            ChatInputBar(
+                chatState = chatState,
+                placeholder = "Ask for help with a lesson...",
+            )
+        },
+    ) { innerPadding ->
+        ChatMessageList(
+            chatState = chatState,
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            showSystemMessages = false,
+            showToolCallMessages = true,
+        )
+    }
+}
+
+@Composable
+private fun RobustTeachingTopBar(state: RobustAppState) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp),
+    ) {
+        Column(modifier = Modifier.padding(12.dp)) {
+            Text(
+                text = if (state.isDegradedMode) "⚠️ Robust Teaching — degraded mode" else "🛡️ Robust Teaching",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (state.lastError != null) {
+                Text(
+                    text = "Last error: ${state.lastError}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+            if (state.toolFailureCount > 0) {
+                Text(
+                    text = "Tool failures this session: ${state.toolFailureCount}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+    }
 }

@@ -35,6 +35,7 @@ import io.github.koogcompose.ui.components.ChatInputBar
 import io.github.koogcompose.ui.components.ChatMessageList
 import io.github.koogcompose.ui.state.ChatState
 import io.github.koogcompose.ui.state.rememberChatState
+import io.github.koogcompose.provider.ProviderConfig
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -141,16 +142,15 @@ class TrackProgressTool(
 fun buildTeachingContext(
     stateStore: KoogStateStore<TeachingState>,
     extraTools: List<StatefulTool<TeachingState>> = emptyList(),
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
 ): KoogDefinition<TeachingState> {
     val recordConcept = RecordConceptTool(stateStore)
     val adjustDifficulty = AdjustDifficultyTool(stateStore)
     val trackProgress = TrackProgressTool(stateStore)
 
     return koogCompose<TeachingState> {
-        // Use Ollama by default (on-device via llama.cpp, no API key needed)
-        // Swap to anthropic() or openAI() for cloud providers
         provider {
-            ollama(model = "llama3.2")
+            use(providerConfig)
         }
 
         // Child-safe content filtering
@@ -286,12 +286,15 @@ fun buildTeachingContext(
  * on iOS, where camera capture and Room persistence aren't wired up.
  */
 @Composable
-fun SimpleHomeTeachingApp(modifier: Modifier = Modifier) {
+fun SimpleHomeTeachingApp(
+    modifier: Modifier = Modifier,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
+) {
     val snackbarHostState = remember { SnackbarHostState() }
 
-    val session = remember {
+    val session = remember(providerConfig) {
         val stateStore = KoogStateStore(TeachingState())
-        val context = buildTeachingContext(stateStore) as KoogComposeContext<TeachingState>
+        val context = buildTeachingContext(stateStore, providerConfig = providerConfig) as KoogComposeContext<TeachingState>
         PhaseSession(
             context = context,
             executor = context.createExecutor(),

@@ -18,6 +18,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import io.github.koogcompose.provider.ProviderConfig
 import io.github.koogcompose.session.KoogComposeContext
 import io.github.koogcompose.session.KoogDefinition
 import io.github.koogcompose.session.KoogStateStore
@@ -70,9 +71,11 @@ fun buildTeachingContextWithPersistence(
     stateStore: KoogStateStore<TeachingState>,
     activityResults: KoogActivityResultRegistry,
     context: Context,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
 ): KoogDefinition<TeachingState> = buildTeachingContext(
     stateStore = stateStore,
     extraTools = listOf(SaveTopicPhotoTool(stateStore, activityResults, context)),
+    providerConfig = providerConfig,
 )
 
 // ── ViewModel (legacy, no persistence) ─────────────────────────────────────────
@@ -116,6 +119,7 @@ class HomeTeachingViewModel(
 @Composable
 fun HomeTeachingApp(
     modifier: Modifier = Modifier,
+    providerConfig: ProviderConfig = ProviderConfig.Ollama(model = "llama3.2"),
 ) {
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -128,12 +132,14 @@ fun HomeTeachingApp(
         HomeTeachingAppLegacy(
             modifier = modifier,
             snackbarHostState = snackbarHostState,
+            providerConfig = providerConfig,
         )
     } else {
         // New mode: with session persistence and resume capability
         HomeTeachingAppWithPersistence(
             modifier = modifier,
             snackbarHostState = snackbarHostState,
+            providerConfig = providerConfig,
         )
     }
 }
@@ -152,6 +158,7 @@ private fun CameraInputAction(onClick: () -> Unit) {
 private fun HomeTeachingAppLegacy(
     modifier: Modifier,
     snackbarHostState: SnackbarHostState,
+    providerConfig: ProviderConfig,
 ) {
     val context = LocalContext.current
 
@@ -159,9 +166,9 @@ private fun HomeTeachingAppLegacy(
     val activityResults = remember { KoogActivityResultRegistry(context) }
 
     // Build agent definition with registry
-    val agentDef = remember {
+    val agentDef = remember(providerConfig) {
         val stateStore = KoogStateStore(TeachingState())
-        buildTeachingContextWithPersistence(stateStore, activityResults, context)
+        buildTeachingContextWithPersistence(stateStore, activityResults, context, providerConfig)
     }
 
     val viewModel: HomeTeachingViewModel = viewModel(
@@ -195,6 +202,7 @@ private fun HomeTeachingAppLegacy(
 private fun HomeTeachingAppWithPersistence(
     modifier: Modifier,
     snackbarHostState: SnackbarHostState,
+    providerConfig: ProviderConfig,
 ) {
     val context = LocalContext.current
     val persistenceManager = remember { SessionPersistenceManager(context) }
@@ -202,9 +210,9 @@ private fun HomeTeachingAppWithPersistence(
     // ActivityResult registry — registered once at Activity startup
     val activityResults = remember { KoogActivityResultRegistry(context) }
 
-    val agentDef = remember {
+    val agentDef = remember(providerConfig) {
         val stateStore = KoogStateStore(TeachingState())
-        buildTeachingContextWithPersistence(stateStore, activityResults, context)
+        buildTeachingContextWithPersistence(stateStore, activityResults, context, providerConfig)
     }
 
     val applicationContext = context.applicationContext

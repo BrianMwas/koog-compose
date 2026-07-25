@@ -39,6 +39,7 @@ kotlin {
         androidMain.dependencies {
             implementation(project(":koog-compose-session-room"))
             implementation(project(":koog-compose-mediapipe"))
+            implementation(project(":koog-compose-device"))
             implementation(libs.androidx.activity.compose)
             implementation(libs.androidx.core.ktx)
             implementation(compose.materialIconsExtended)
