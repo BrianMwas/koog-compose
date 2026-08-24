@@ -44,10 +44,10 @@ This works because koog-compose bridges two things that usually live in separate
 
 | koog-compose | Koog | Kotlin | Compose Multiplatform |
 |---|---|---|---|
-| 2.1.0 (current) | <!-- TODO: verify --> 1.0.0 | 2.3.20 | <!-- TODO: fill --> |
-| 0.1.x (legacy) | 0.x | 2.2.x | <!-- TODO: fill --> |
+| 2.1.0 (current) | 1.0.0 | 2.3.20 | 1.10.3 |
+| 0.1.x (legacy) | 0.x | 2.2.x | not tracked |
 
-> Koog 1.0 removed all previously deprecated APIs. If you're upgrading from koog-compose 0.1.x, see the [migration notes](#) <!-- TODO: link CHANGELOG/migration guide -->.
+> Koog 1.0 removed all previously deprecated APIs. If you're upgrading from koog-compose 0.1.x, see `KOOG_1.0.0_MIGRATION_AUDIT.md` in this repo for the breaking-change inventory behind that jump.
 
 ---
 
